@@ -6,22 +6,25 @@ from datetime import datetime
 import json 
 import streamlit as st 
 import time 
-import numpy as np # Adicionado para usar funções matemáticas no delta
+import numpy as np # Import necessário para funções matemáticas robustas (como o delta percentual)
 
-# --- FUNÇÃO HELPER PARA FORMATAR BRL (MANTIDA) ---
+# --- FUNÇÃO HELPER PARA FORMATAR BRL ---
 def format_brl(value):
     # Formata para R$ X.XXX,XX
     return f"R$ {value:,.2f}".replace('.', 'X').replace(',', '.').replace('X', ',')
 
-# --- CONFIGURAÇÕES E AUTENTICAÇÃO (ADAPTADA AO STREAMLIT) ---
+# --- CONFIGURAÇÕES E AUTENTICAÇÃO ---
 SPREADSHEET_ID = "1LuqYrfR8ry_MqCS93Mpj9_7Vu0i9RUTomJU2n69bEug"
 WORKSHEET_NAME = "vendas"
 
-# Usamos o decorator st.cache_data para manter o código limpo
+# Função com cache para a leitura da planilha
 @st.cache_data(ttl=300) 
 def carregar_e_limpar_dados():
+    st.set_page_config(layout="wide", page_title="Dashboard Multicamadas de Vendas")
+    
     # 1. AUTENTICAÇÃO SEGURA NO STREAMLIT
     try:
+        # Tenta carregar as credenciais do Streamlit Secrets
         gc = gspread.service_account_from_dict(st.secrets["gcp_service_account"])
     except Exception as e:
         st.error(f"ERRO DE AUTENTICAÇÃO: O Streamlit Secret 'gcp_service_account' não está configurado. Detalhes: {e}")
@@ -39,7 +42,7 @@ def carregar_e_limpar_dados():
         empty_df = pd.DataFrame()
         return empty_df, empty_df, empty_df
 
-    # 3. Limpeza da Coluna 'VALOR DA VENDA' e criação de 'Total Limpo' (MANTIDO)
+    # 3. Limpeza da Coluna 'VALOR DA VENDA' e criação de 'Total Limpo'
     df['Total Limpo'] = (
         df['VALOR DA VENDA'] 
         .astype(str)
@@ -51,7 +54,7 @@ def carregar_e_limpar_dados():
     df['Total Limpo'] = pd.to_numeric(df['Total Limpo'], errors='coerce')
     df.dropna(subset=['Total Limpo'], inplace=True)
 
-    # 4. Conversão da Coluna de Data/Hora (MANTIDO)
+    # 4. Conversão da Coluna de Data/Hora
     df['Data/Hora Venda'] = pd.to_datetime(df['DATA E HORA'], errors='coerce', format='%d/%m/%Y %H:%M:%S')
     df.dropna(subset=['Data/Hora Venda'], inplace=True)
     df['Data'] = df['Data/Hora Venda'].dt.date # Adicionando coluna Data apenas
@@ -60,7 +63,7 @@ def carregar_e_limpar_dados():
     if df.empty:
         raise ValueError("O DataFrame está vazio após a limpeza de datas/valores.")
 
-    # 5. FILTRAGEM TEMPORAL (MANTIDO)
+    # 5. FILTRAGEM TEMPORAL
     data_atual = datetime.now().date()
     df_dia_atual = df[df['Data'] == data_atual].copy()
     mes_atual = data_atual.month
@@ -69,7 +72,7 @@ def carregar_e_limpar_dados():
 
     return df, df_mes_atual, df_dia_atual
 
-# --- FUNÇÃO HELPER PARA CÁLCULOS ROBUSTOS (MANTIDA) ---
+# --- FUNÇÃO HELPER PARA CÁLCULOS ROBUSTOS ---
 def calcular_kpis(df, periodo="Dia"):
     if df.empty:
         return {
@@ -104,7 +107,6 @@ def calcular_kpis(df, periodo="Dia"):
 
 # --- FUNÇÃO PRINCIPAL DE MONTAGEM DO DASHBOARD STREAMLIT ---
 def montar_dashboard(df_completo, df_mes, df_dia):
-    st.set_page_config(layout="wide", page_title="Dashboard Multicamadas de Vendas")
     
     st.title("🍦 Painel de Controle de Vendas (Ativo) 🚀")
     
@@ -114,7 +116,7 @@ def montar_dashboard(df_completo, df_mes, df_dia):
     kpis_mes = calcular_kpis(df_mes, periodo="Mês")
     kpis_dia = calcular_kpis(df_dia, periodo="Dia")
     
-    # --- NOVOS CÁLCULOS DE CONTAGEM E DELTA ---
+    # --- CÁLCULOS DE CONTAGEM E DELTA ---
     
     # 1.1. Contagem Diária (HOJE)
     vendas_hoje_count = df_dia.shape[0]
@@ -137,12 +139,32 @@ def montar_dashboard(df_completo, df_mes, df_dia):
     ]
     vendas_mes_passado_count = df_mes_passado.shape[0]
 
+    # --- CÁLCULO DE DELTAS (GARANTINDO DEFINIÇÃO PRÉVIA) ---
+    
+    # Delta 1: Vendas Diárias (Contagem)
+    delta_diario_count = vendas_hoje_count - vendas_ontem_count
+    
+    # Delta 2: Vendas Mensais (Contagem - Percentual)
+    if vendas_mes_passado_count > 0:
+        percentual_crescimento = ((vendas_mes_count / vendas_mes_passado_count) - 1) * 100
+        delta_mensal_count_fmt = f"{percentual_crescimento:.1f}%"
+        delta_color_mensal = "normal" if percentual_crescimento >= 0 else "inverse" 
+    else:
+        delta_mensal_count_fmt = "N/A"
+        delta_color_mensal = "off"
+    
+    # Delta 3: Arrecadação Diária (Valor)
+    delta_arrecadado_diario = kpis_dia['total'] - df_ontem['Total Limpo'].sum()
+    
+    # Delta 4: Arrecadação Mensal (Valor)
+    delta_arrecadado_mensal = kpis_mes['total'] - df_mes_passado['Total Limpo'].sum()
+
+
     # --- 2. KPIS DE CONTAGEM E VALOR (LINHA PRINCIPAL) ---
     st.header("Visão Geral Rápida")
     col0_a, col0_b, col0_c, col0_d = st.columns(4) # Quatro colunas para as métricas mais importantes
     
     # Métrica 1: Vendas Hoje (Contagem)
-    delta_diario_count = ventas_hoje_count - vendas_ontem_count
     col0_a.metric(
         label="VENDAS HOJE", 
         value=f"{vendas_hoje_count} un", 
@@ -151,25 +173,14 @@ def montar_dashboard(df_completo, df_mes, df_dia):
     )
 
     # Métrica 2: Vendas Mês (Contagem)
-    # Delta simples: Vendas do Mês Atual vs Vendas Totais do Mês Passado
-    if vendas_mes_passado_count == 0:
-        delta_mensal_count = "N/A"
-    else:
-        # Calcula o percentual de crescimento em relação ao mês passado
-        delta_mensal_count = f"{((vendas_mes_count / vendas_mes_passado_count) - 1) * 100:.1f}%"
-        # Garante que o delta seja exibido como número positivo/negativo no st.metric
-        # Usamos numpy.sign para determinar a cor do delta
-        delta_color = "normal" if np.sign(float(delta_mensal_count.replace('%', ''))) >= 0 else "inverse" 
-
     col0_b.metric(
         label="VENDAS MÊS", 
         value=f"{vendas_mes_count} un", 
-        delta=delta_mensal_count if vendas_mes_passado_count > 0 else None,
-        delta_color=delta_color if vendas_mes_passado_count > 0 else "off"
+        delta=delta_mensal_count_fmt,
+        delta_color=delta_color_mensal
     )
 
     # Métrica 3: Arrecadação Hoje
-    delta_arrecadado_diario = kpis_dia['total'] - df_ontem['Total Limpo'].sum()
     col0_c.metric(
         label="R$ HOJE", 
         value=kpis_dia['total_fmt'], 
@@ -178,7 +189,6 @@ def montar_dashboard(df_completo, df_mes, df_dia):
     )
     
     # Métrica 4: Arrecadação Mês
-    delta_arrecadado_mensal = kpis_mes['total'] - df_mes_passado['Total Limpo'].sum()
     col0_d.metric(
         label="R$ MÊS", 
         value=kpis_mes['total_fmt'], 
@@ -189,37 +199,82 @@ def montar_dashboard(df_completo, df_mes, df_dia):
     st.divider()
     
     # --- 3. KPIS MENSAIS (MÉTRICAS SECUNDÁRIAS) ---
-    st.header("Contexto Mensal (Acumulado)")
+    st.header("Contexto Mensal (Detalhes)")
     col1, col2, col3 = st.columns(3)
 
-    col1.metric("Sabor Campeão (MÊS)", kpis_mes['sabor'], delta=None, delta_color="normal", help="O item mais vendido em quantidade.")
-    col2.metric("Pico de Vendas (HOJE)", f"{kpis_dia['pico_hora']}h", delta=None, delta_color="normal", help="Hora com maior frequência de vendas.")
+    col1.metric("Sabor Campeão (MÊS)", kpis_mes['sabor'], help="O item mais vendido em quantidade.")
+    col2.metric("Pico de Vendas (HOJE)", f"{kpis_dia['pico_hora']}h", help="Hora com maior frequência de vendas.")
 
     # 🚨 ALERTA DE LGPD no Dashboard Público
-    col3.metric("Melhor Cliente (MÊS)", f"{kpis_mes['cliente']} | {kpis_mes['cliente_gasto_fmt']}", delta=None, delta_color="normal", help="Cliente que mais gastou (Mês). Considere anonimizar no código!")
+    col3.metric("Melhor Cliente (MÊS)", f"{kpis_mes['cliente']} | {kpis_mes['cliente_gasto_fmt']}", help="Cliente que mais gastou (Mês). Considere anonimizar no código!")
 
     st.divider()
 
-    # --- 4. VISUALIZAÇÕES COM PLOTLY (EM COLUNAS DE WIDE SCREEN) ---
+    # --- 4. VISUALIZAÇÕES COM PLOTLY ---
+    
     st.header("Visualizações Chave")
     
-    # O restante dos gráficos... (MANTIDOS)
+    chart_col1, chart_col2 = st.columns(2)
+
+    # Gráfico 1: Vendas por Sabor/Item (Mensal)
+    with chart_col1:
+        st.subheader("Top 10 Sabores/Itens Mais Vendidos (Mês)")
+        vendas_por_item = df_mes['SABORES'].value_counts().reset_index() 
+        vendas_por_item.columns = ['Item', 'Contagem']
+        
+        fig_sabor = px.bar(
+            vendas_por_item.head(10).sort_values(by='Contagem', ascending=True), 
+            x='Contagem', y='Item', 
+            orientation='h', 
+            template='plotly_dark'
+        )
+        st.plotly_chart(fig_sabor, use_container_width=True)
+
+    # Gráfico 3: Melhores Clientes por Gasto Total (Mensal)
+    with chart_col2:
+        st.subheader("Top 5 Clientes (Mês) ⚠️ LGPD")
+        melhor_cliente_df_mes = df_mes.groupby('DADOS DO COMPRADOR')['Total Limpo'].sum().sort_values(ascending=False)
+        fig_cliente = px.bar(
+            melhor_cliente_df_mes.head(5).reset_index().rename(columns={'Total Limpo': 'Gasto Total'}),
+            x='Gasto Total', y='DADOS DO COMPRADOR', 
+            orientation='h',
+            template='plotly_dark'
+        )
+        st.plotly_chart(fig_cliente, use_container_width=True)
+
+    # Gráfico 2: Pico de Vendas por Hora do Dia (Diário) - Em linha cheia
+    st.subheader(f'Frequência de Vendas por Hora (Hoje)')
+    pico_hora_df_dia = df_dia['Hora'].value_counts().sort_index().reset_index()
+    pico_hora_df_dia.columns = ['Hora', 'Número de Vendas']
+    
+    fig_hora = px.bar(
+        pico_hora_df_dia, 
+        x='Hora', y='Número de Vendas', 
+        template='plotly_dark',
+        title=f'Pico: {kpis_dia["pico_hora"]}h'
+    )
+    fig_hora.update_xaxes(tick0=0, dtick=1)
+    st.plotly_chart(fig_hora, use_container_width=True)
     
 # --- EXECUÇÃO PRINCIPAL STREAMLIT ---
 if __name__ == "__main__":
     
+    # Simula um loading bar/spinner para UX
     with st.spinner('Puxando os dados da planilha, limpando e analisando...'):
         time.sleep(1) 
         
         try:
             df_completo, df_mes, df_dia = carregar_e_limpar_dados()
             
+            # Execução final, se não houver erro no carregamento
             if not df_completo.empty:
                 montar_dashboard(df_completo, df_mes, df_dia)
             else:
-                 st.warning("⚠️ Sem dados disponíveis ou erro de carregamento. Verifique a planilha.")
+                 # Esta mensagem de aviso é coberta pelo try/except de carregamento
+                 pass 
 
         except ValueError as ve:
             st.error(f"🛑 ERRO CRÍTICO DE DADOS: Ocorreu um problema na limpeza ou filtragem. Detalhes: {ve}")
         except Exception as e:
-            st.exception(f"Ocorreu um erro INESPERADO. Tente novamente mais tarde. {e}")
+            # O st.exception captura e exibe o traceback completo, útil para debug.
+            st.exception(f"Ocorreu um erro INESPERADO. Tente novamente mais tarde.")
