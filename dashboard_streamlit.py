@@ -5,10 +5,11 @@ import streamlit as st
 import time 
 
 # --- CONFIGURAÇÕES FIXAS (NOVOS DADOS) ---
-# ID da planilha unificada fornecido pelo usuário
-SPREADSHEET_ID_UNIFICADO = "1XWdRbHqY6DWOlSO-oJbBSyOsXmYhM_NEA2_yvWbfq2Y" 
-ABA_VENDAS = "VENDAS"
-ABA_GASTOS = "GASTOS"
+# NOVO ID da planilha fornecido pelo usuário
+SPREADSHEET_ID_UNIFICADO = "1LuqYrfR8ry_MqCS93Mpj9_7Vu0i9RUTomJU2n69bEug" 
+# NOVAS ABAS (em minúsculo)
+ABA_VENDAS = "vendas"
+ABA_GASTOS = "gastos"
 
 # Definindo o nome da coluna de item na planilha de Vendas (Ajustado para Confeitaria)
 COLUNA_ITEM_VENDIDO = 'PRODUTO' 
@@ -25,6 +26,7 @@ def format_brl(value):
 def limpar_coluna_valor(df, coluna_original, coluna_limpa='Total Limpo'):
     """Limpa e converte a coluna de valor para numérico, removendo R$ e separadores."""
     if coluna_original not in df.columns:
+        # Lança um erro claro se a coluna não for encontrada
         raise ValueError(f"A coluna '{coluna_original}' não foi encontrada no DataFrame. Verifique o nome da coluna na planilha!")
 
     df[coluna_limpa] = (
@@ -55,7 +57,9 @@ def filtrar_por_mes_e_dia(df, data_atual: date):
     mes_atual = data_atual.month
     ano_atual = data_atual.year
     
+    # Filtra pelo mês e ano vigentes
     df_mes = df[(df['Data/Hora'].dt.month == mes_atual) & (df['Data/Hora'].dt.year == ano_atual)].copy()
+    # Filtra pelo dia vigente
     df_dia = df[df['Data'] == data_atual].copy()
     
     return df_mes, df_dia
@@ -82,7 +86,7 @@ def carregar_e_limpar_dados():
 
         # 3. CARREGAMENTO E LIMPEZA DE GASTOS
         df_gastos = pd.DataFrame(sh.worksheet(ABA_GASTOS).get_all_records())
-        # Coluna de valor na ABA_GASTOS é 'VALOR' <--- AJUSTADO AQUI!
+        # Coluna de valor na ABA_GASTOS é 'VALOR' <--- AJUSTADO
         df_gastos = limpar_coluna_valor(df_gastos, 'VALOR') 
         # Coluna de data/hora na ABA_GASTOS é 'DATA E HORA'
         df_gastos = processar_data(df_gastos, 'DATA E HORA') 
@@ -92,7 +96,7 @@ def carregar_e_limpar_dados():
         st.error(f"ERRO CRÍTICO DE CONFIGURAÇÃO DE COLUNA: {ve}")
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
     except Exception as e:
-        st.error(f"ERRO DE CONEXÃO/AUTENTICAÇÃO: Verifique o ID da planilha e o Streamlit Secret. Detalhes: {e}")
+        st.error(f"ERRO DE CONEXÃO/AUTENTICAÇÃO: Verifique o ID '{SPREADSHEET_ID_UNIFICADO}', os nomes das abas ('{ABA_VENDAS}' e '{ABA_GASTOS}') e o Streamlit Secret. Detalhes: {e}")
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
 
@@ -161,6 +165,7 @@ def montar_dashboard(kpis_vendas, kpis_gastos):
     total_gastos_mes = kpis_gastos['total_mes']
     resultado_liquido = total_vendas_mes - total_gastos_mes
     
+    # Analogia: É o que sobrou na vasilha depois que você tirou todos os ingredientes (gastos)
     cor_resultado = "normal" if resultado_liquido >= 0 else "inverse" 
 
     col_res_a, col_res_b = st.columns([2, 1])
@@ -245,6 +250,7 @@ def montar_dashboard(kpis_vendas, kpis_gastos):
 # --- EXECUÇÃO PRINCIPAL STREAMLIT ---
 if __name__ == "__main__":
     
+    # Sarcasmo: O spinner está fazendo o trabalho pesado, como um batedor de claras elétrico.
     with st.spinner('Assando os dados, limpando e unificando Vendas e Gastos...'):
         time.sleep(1) 
         
@@ -264,4 +270,5 @@ if __name__ == "__main__":
                  st.info("⚠️ Nenhum dado de Vendas ou Gastos encontrado para o mês vigente. Verifique suas planilhas e o Streamlit Secrets.")
 
         except Exception as e:
+            # Se o código quebrar, mostramos o traceback completo para debug.
             st.exception(f"Ocorreu um erro INESPERADO. Algo deu errado na sua receita de código! Detalhes: {e}")
