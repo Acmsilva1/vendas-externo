@@ -1,280 +1,267 @@
 import pandas as pd
 import gspread
-import os
-import plotly.express as px
-from datetime import datetime
-import json 
+from datetime import datetime, date
 import streamlit as st 
 import time 
-import numpy as np # Import necessário para funções matemáticas robustas (como o delta percentual)
+
+# --- CONFIGURAÇÕES FIXAS (NOVOS DADOS) ---
+# ID da planilha unificada fornecido pelo usuário
+SPREADSHEET_ID_UNIFICADO = "1XWdRbHqY6DWOlSO-oJbBSyOsXmYhM_NEA2_yvWbfq2Y" 
+ABA_VENDAS = "VENDAS"
+ABA_GASTOS = "GASTOS"
+
+# Definindo o nome da coluna de item na planilha de Vendas (Ajustado para Confeitaria)
+COLUNA_ITEM_VENDIDO = 'PRODUTO' 
+# Definindo o nome da coluna de categoria na planilha de Gastos
+COLUNA_CATEGORIA_GASTO = 'CATEGORIA' 
 
 # --- FUNÇÃO HELPER PARA FORMATAR BRL ---
 def format_brl(value):
     # Formata para R$ X.XXX,XX
     return f"R$ {value:,.2f}".replace('.', 'X').replace(',', '.').replace('X', ',')
 
-# --- CONFIGURAÇÕES E AUTENTICAÇÃO ---
-SPREADSHEET_ID = "1LuqYrfR8ry_MqCS93Mpj9_7Vu0i9RUTomJU2n69bEug"
-WORKSHEET_NAME = "vendas"
+# --- FUNÇÕES DE LIMPEZA E CÁLCULO DE KPIS ---
 
-# Função com cache para a leitura da planilha
-@st.cache_data(ttl=300) 
-def carregar_e_limpar_dados():
-    st.set_page_config(layout="wide", page_title="Dashboard Multicamadas de Vendas")
-    
-    # 1. AUTENTICAÇÃO SEGURA NO STREAMLIT
-    try:
-        # Tenta carregar as credenciais do Streamlit Secrets
-        gc = gspread.service_account_from_dict(st.secrets["gcp_service_account"])
-    except Exception as e:
-        st.error(f"ERRO DE AUTENTICAÇÃO: O Streamlit Secret 'gcp_service_account' não está configurado. Detalhes: {e}")
-        empty_df = pd.DataFrame()
-        return empty_df, empty_df, empty_df
+def limpar_coluna_valor(df, coluna_original, coluna_limpa='Total Limpo'):
+    """Limpa e converte a coluna de valor para numérico, removendo R$ e separadores."""
+    if coluna_original not in df.columns:
+        raise ValueError(f"A coluna '{coluna_original}' não foi encontrada no DataFrame. Verifique o nome da coluna na planilha!")
 
-    # 2. CARREGAMENTO
-    try:
-        sh = gc.open_by_key(SPREADSHEET_ID)
-        worksheet = sh.worksheet(WORKSHEET_NAME)
-        data = worksheet.get_all_records()
-        df = pd.DataFrame(data)
-    except Exception as e:
-        st.error(f"ERRO AO ABRIR PLANILHA: {e}. Verifique o ID e o nome da aba.")
-        empty_df = pd.DataFrame()
-        return empty_df, empty_df, empty_df
-
-    # 3. Limpeza da Coluna 'VALOR DA VENDA' e criação de 'Total Limpo'
-    df['Total Limpo'] = (
-        df['VALOR DA VENDA'] 
+    df[coluna_limpa] = (
+        df[coluna_original] 
         .astype(str)
         .str.replace('R$', '', regex=False)
         .str.replace('.', '', regex=False)
         .str.replace(',', '.', regex=False)
         .str.strip()
     )
-    df['Total Limpo'] = pd.to_numeric(df['Total Limpo'], errors='coerce')
-    df.dropna(subset=['Total Limpo'], inplace=True)
+    df[coluna_limpa] = pd.to_numeric(df[coluna_limpa], errors='coerce')
+    df.dropna(subset=[coluna_limpa], inplace=True)
+    return df
 
-    # 4. Conversão da Coluna de Data/Hora
-    df['Data/Hora Venda'] = pd.to_datetime(df['DATA E HORA'], errors='coerce', format='%d/%m/%Y %H:%M:%S')
-    df.dropna(subset=['Data/Hora Venda'], inplace=True)
-    df['Data'] = df['Data/Hora Venda'].dt.date # Adicionando coluna Data apenas
-    df['Hora'] = df['Data/Hora Venda'].dt.hour
-    
-    if df.empty:
-        raise ValueError("O DataFrame está vazio após a limpeza de datas/valores.")
+def processar_data(df, coluna_data_hora):
+    """Converte e extrai componentes de data/hora (Assume formato %d/%m/%Y %H:%M:%S)."""
+    if coluna_data_hora not in df.columns:
+        raise ValueError(f"A coluna '{coluna_data_hora}' não foi encontrada no DataFrame. Verifique o nome da coluna na planilha!")
+        
+    df['Data/Hora'] = pd.to_datetime(df[coluna_data_hora], errors='coerce', format='%d/%m/%Y %H:%M:%S')
+    df.dropna(subset=['Data/Hora'], inplace=True)
+    df['Data'] = df['Data/Hora'].dt.date
+    df['Hora'] = df['Data/Hora'].dt.hour
+    return df
 
-    # 5. FILTRAGEM TEMPORAL
-    data_atual = datetime.now().date()
-    df_dia_atual = df[df['Data'] == data_atual].copy()
+def filtrar_por_mes_e_dia(df, data_atual: date):
+    """Filtra o DataFrame estritamente para o mês e dia atual."""
     mes_atual = data_atual.month
     ano_atual = data_atual.year
-    df_mes_atual = df[(df['Data/Hora Venda'].dt.month == mes_atual) & (df['Data/Hora Venda'].dt.year == ano_atual)].copy()
-
-    return df, df_mes_atual, df_dia_atual
-
-# --- FUNÇÃO HELPER PARA CÁLCULOS ROBUSTOS ---
-def calcular_kpis(df, periodo="Dia"):
-    if df.empty:
-        return {
-            'total': 0.0,
-            'total_fmt': format_brl(0.0),
-            'sabor': f'Sem Vendas ({periodo})',
-            'cliente': f'N/A ({periodo})',
-            'cliente_gasto_fmt': format_brl(0.0),
-            'pico_hora': 'N/A'
-        }
     
-    total_vendas = df['Total Limpo'].sum()
-    sabor_mais_vendido = df['SABORES'].mode().iloc[0] if not df['SABORES'].empty else f'N/A ({periodo})'
+    df_mes = df[(df['Data/Hora'].dt.month == mes_atual) & (df['Data/Hora'].dt.year == ano_atual)].copy()
+    df_dia = df[df['Data'] == data_atual].copy()
     
-    # 🚨 PONTO DE ATENÇÃO LGPD: Usando 'DADOS DO COMPRADOR'
-    melhor_cliente_df = df.groupby('DADOS DO COMPRADOR')['Total Limpo'].sum().sort_values(ascending=False)
-    
-    melhor_cliente = melhor_cliente_df.index[0] if not melhor_cliente_df.empty else f'N/A ({periodo})'
-    melhor_cliente_gasto = melhor_cliente_df.iloc[0] if not melhor_cliente_df.empty else 0.0
-    
-    pico_hora_df = df['Hora'].value_counts()
-    pico_hora = pico_hora_df.index[0] if not pico_hora_df.empty else 'N/A'
-    
-    return {
-        'total': total_vendas,
-        'total_fmt': format_brl(total_vendas),
-        'sabor': sabor_mais_vendido,
-        'cliente': melhor_cliente,
-        'cliente_gasto_fmt': format_brl(melhor_cliente_gasto),
-        'pico_hora': pico_hora
-    }
-
-# --- FUNÇÃO PRINCIPAL DE MONTAGEM DO DASHBOARD STREAMLIT ---
-def montar_dashboard(df_completo, df_mes, df_dia):
-    
-    st.title("🍦 Painel de Controle de Vendas (Ativo) 🚀")
-    
-    st.caption(f"Dados atualizados em: **{datetime.now().strftime('%d/%m/%Y %H:%M:%S')}** (Cache de 5 minutos)")
-
-    # --- 1. CÁLCULOS DOS KPIS ---
-    kpis_mes = calcular_kpis(df_mes, periodo="Mês")
-    kpis_dia = calcular_kpis(df_dia, periodo="Dia")
-    
-    # --- CÁLCULOS DE CONTAGEM E DELTA ---
-    
-    # 1.1. Contagem Diária (HOJE)
-    vendas_hoje_count = df_dia.shape[0]
-    
-    # 1.2. Contagem Diária (ONTEM - Para o Delta)
-    data_ontem = datetime.now().date() - pd.Timedelta(days=1)
-    df_ontem = df_completo[df_completo['Data'] == data_ontem]
-    vendas_ontem_count = df_ontem.shape[0]
-    
-    # 1.3. Contagem Mensal (Este Mês)
-    vendas_mes_count = df_mes.shape[0]
-    
-    # 1.4. Contagem Mensal (Mês Passado - Para o Delta)
-    data_mes_passado = datetime.now().date().replace(day=1) - pd.Timedelta(days=1)
-    mes_passado = data_mes_passado.month
-    ano_mes_passado = data_mes_passado.year
-    df_mes_passado = df_completo[
-        (df_completo['Data/Hora Venda'].dt.month == mes_passado) & 
-        (df_completo['Data/Hora Venda'].dt.year == ano_mes_passado)
-    ]
-    vendas_mes_passado_count = df_mes_passado.shape[0]
-
-    # --- CÁLCULO DE DELTAS (GARANTINDO DEFINIÇÃO PRÉVIA) ---
-    
-    # Delta 1: Vendas Diárias (Contagem)
-    delta_diario_count = vendas_hoje_count - vendas_ontem_count
-    
-    # Delta 2: Vendas Mensais (Contagem - Percentual)
-    if vendas_mes_passado_count > 0:
-        percentual_crescimento = ((vendas_mes_count / vendas_mes_passado_count) - 1) * 100
-        delta_mensal_count_fmt = f"{percentual_crescimento:.1f}%"
-        delta_color_mensal = "normal" if percentual_crescimento >= 0 else "inverse" 
-    else:
-        delta_mensal_count_fmt = "N/A"
-        delta_color_mensal = "off"
-    
-    # Delta 3: Arrecadação Diária (Valor)
-    delta_arrecadado_diario = kpis_dia['total'] - df_ontem['Total Limpo'].sum()
-    
-    # Delta 4: Arrecadação Mensal (Valor)
-    delta_arrecadado_mensal = kpis_mes['total'] - df_mes_passado['Total Limpo'].sum()
+    return df_mes, df_dia
 
 
-    # --- 2. KPIS DE CONTAGEM E VALOR (LINHA PRINCIPAL) ---
-    st.header("Visão Geral Rápida")
-    col0_a, col0_b, col0_c, col0_d = st.columns(4) # Quatro colunas para as métricas mais importantes
+@st.cache_data(ttl=300) 
+def carregar_e_limpar_dados():
+    st.set_page_config(layout="wide", page_title="💰 Dashboard Financeiro Confeitaria")
     
-    # Métrica 1: Vendas Hoje (Contagem)
-    col0_a.metric(
-        label="VENDAS HOJE", 
-        value=f"{vendas_hoje_count} un", 
-        delta=f"{delta_diario_count} vs Ontem",
-        delta_color="normal"
-    )
-
-    # Métrica 2: Vendas Mês (Contagem)
-    col0_b.metric(
-        label="VENDAS MÊS", 
-        value=f"{vendas_mes_count} un", 
-        delta=delta_mensal_count_fmt,
-        delta_color=delta_color_mensal
-    )
-
-    # Métrica 3: Arrecadação Hoje
-    col0_c.metric(
-        label="R$ HOJE", 
-        value=kpis_dia['total_fmt'], 
-        delta=format_brl(delta_arrecadado_diario) if delta_arrecadado_diario != 0 else None,
-        delta_color="normal"
-    )
+    data_atual = datetime.now().date()
     
-    # Métrica 4: Arrecadação Mês
-    col0_d.metric(
-        label="R$ MÊS", 
-        value=kpis_mes['total_fmt'], 
-        delta=format_brl(delta_arrecadado_mensal) if delta_arrecadado_mensal != 0 else None,
-        delta_color="normal"
-    )
-    
-    st.divider()
-    
-    # --- 3. KPIS MENSAIS (MÉTRICAS SECUNDÁRIAS) ---
-    st.header("Contexto Mensal (Detalhes)")
-    col1, col2, col3 = st.columns(3)
+    try:
+        # 1. AUTENTICAÇÃO
+        gc = gspread.service_account_from_dict(st.secrets["gcp_service_account"])
+        sh = gc.open_by_key(SPREADSHEET_ID_UNIFICADO)
 
-    col1.metric("Sabor Campeão (MÊS)", kpis_mes['sabor'], help="O item mais vendido em quantidade.")
-    col2.metric("Pico de Vendas (HOJE)", f"{kpis_dia['pico_hora']}h", help="Hora com maior frequência de vendas.")
+        # 2. CARREGAMENTO E LIMPEZA DE VENDAS
+        df_vendas = pd.DataFrame(sh.worksheet(ABA_VENDAS).get_all_records())
+        # Coluna de valor na ABA_VENDAS é 'VALOR DA VENDA'
+        df_vendas = limpar_coluna_valor(df_vendas, 'VALOR DA VENDA') 
+        # Coluna de data/hora na ABA_VENDAS é 'DATA E HORA'
+        df_vendas = processar_data(df_vendas, 'DATA E HORA')
+        df_vendas_mes, df_vendas_dia = filtrar_por_mes_e_dia(df_vendas, data_atual)
 
-    # 🚨 ALERTA DE LGPD no Dashboard Público
-    col3.metric("Melhor Cliente (MÊS)", f"{kpis_mes['cliente']} | {kpis_mes['cliente_gasto_fmt']}", help="Cliente que mais gastou (Mês). Considere anonimizar no código!")
-
-    st.divider()
-
-    # --- 4. VISUALIZAÇÕES COM PLOTLY ---
-    
-    st.header("Visualizações Chave")
-    
-    chart_col1, chart_col2 = st.columns(2)
-
-    # Gráfico 1: Vendas por Sabor/Item (Mensal)
-    with chart_col1:
-        st.subheader("Top 10 Sabores/Itens Mais Vendidos (Mês)")
-        vendas_por_item = df_mes['SABORES'].value_counts().reset_index() 
-        vendas_por_item.columns = ['Item', 'Contagem']
+        # 3. CARREGAMENTO E LIMPEZA DE GASTOS
+        df_gastos = pd.DataFrame(sh.worksheet(ABA_GASTOS).get_all_records())
+        # Coluna de valor na ABA_GASTOS é 'VALOR' <--- AJUSTADO AQUI!
+        df_gastos = limpar_coluna_valor(df_gastos, 'VALOR') 
+        # Coluna de data/hora na ABA_GASTOS é 'DATA E HORA'
+        df_gastos = processar_data(df_gastos, 'DATA E HORA') 
+        df_gastos_mes, df_gastos_dia = filtrar_por_mes_e_dia(df_gastos, data_atual)
         
-        fig_sabor = px.bar(
-            vendas_por_item.head(10).sort_values(by='Contagem', ascending=True), 
-            x='Contagem', y='Item', 
-            orientation='h', 
-            template='plotly_dark'
-        )
-        st.plotly_chart(fig_sabor, use_container_width=True)
+    except ValueError as ve:
+        st.error(f"ERRO CRÍTICO DE CONFIGURAÇÃO DE COLUNA: {ve}")
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+    except Exception as e:
+        st.error(f"ERRO DE CONEXÃO/AUTENTICAÇÃO: Verifique o ID da planilha e o Streamlit Secret. Detalhes: {e}")
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
-    # Gráfico 3: Melhores Clientes por Gasto Total (Mensal)
-    with chart_col2:
-        st.subheader("Top 5 Clientes (Mês) ⚠️ LGPD")
-        melhor_cliente_df_mes = df_mes.groupby('DADOS DO COMPRADOR')['Total Limpo'].sum().sort_values(ascending=False)
-        fig_cliente = px.bar(
-            melhor_cliente_df_mes.head(5).reset_index().rename(columns={'Total Limpo': 'Gasto Total'}),
-            x='Gasto Total', y='DADOS DO COMPRADOR', 
-            orientation='h',
-            template='plotly_dark'
-        )
-        st.plotly_chart(fig_cliente, use_container_width=True)
 
-    # Gráfico 2: Pico de Vendas por Hora do Dia (Diário) - Em linha cheia
-    st.subheader(f'Frequência de Vendas por Hora (Hoje)')
-    pico_hora_df_dia = df_dia['Hora'].value_counts().sort_index().reset_index()
-    pico_hora_df_dia.columns = ['Hora', 'Número de Vendas']
+    return df_vendas_mes, df_vendas_dia, df_gastos_mes, df_gastos_dia
+
+def calcular_kpis_vendas(df_mes, df_dia):
+    """Calcula KPIs essenciais de VENDAS para o painel clean."""
+    kpis = {}
     
-    fig_hora = px.bar(
-        pico_hora_df_dia, 
-        x='Hora', y='Número de Vendas', 
-        template='plotly_dark',
-        title=f'Pico: {kpis_dia["pico_hora"]}h'
+    # KPIs do Mês
+    kpis['total_mes'] = df_mes['Total Limpo'].sum() if not df_mes.empty else 0.0
+    kpis['contagem_mes'] = df_mes.shape[0]
+    
+    # KPIs do Dia
+    kpis['total_dia'] = df_dia['Total Limpo'].sum() if not df_dia.empty else 0.0
+    kpis['contagem_dia'] = df_dia.shape[0]
+
+    # Dados Adicionais (Para texto descritivo)
+    if not df_mes.empty and COLUNA_ITEM_VENDIDO in df_mes.columns:
+        # Produto Campeão (Bolo Mais Vendido)
+        kpis['item_campeao_mes'] = df_mes[COLUNA_ITEM_VENDIDO].mode().iloc[0] 
+    else:
+        kpis['item_campeao_mes'] = 'N/A'
+        
+    if not df_dia.empty:
+        # Pico de Hora
+        pico_hora_df = df_dia['Hora'].value_counts()
+        kpis['pico_hora_dia'] = pico_hora_df.index[0] if not pico_hora_df.empty else 'N/A'
+    else:
+        kpis['pico_hora_dia'] = 'N/A'
+
+    return kpis
+
+def calcular_kpis_gastos(df_mes, df_dia):
+    """Calcula KPIs essenciais de GASTOS para o painel clean."""
+    kpis = {}
+    
+    # KPIs do Mês e Dia
+    kpis['total_mes'] = df_mes['Total Limpo'].sum() if not df_mes.empty else 0.0
+    kpis['total_dia'] = df_dia['Total Limpo'].sum() if not df_dia.empty else 0.0
+
+    # Dados Adicionais (Para texto descritivo)
+    if not df_mes.empty and COLUNA_CATEGORIA_GASTO in df_mes.columns:
+        # Categoria de Gasto Principal
+        gasto_por_categoria = df_mes.groupby(COLUNA_CATEGORIA_GASTO)['Total Limpo'].sum().sort_values(ascending=False)
+        kpis['categoria_principal_mes'] = gasto_por_categoria.index[0] 
+        kpis['gasto_principal_valor'] = gasto_por_categoria.iloc[0]
+    else:
+        kpis['categoria_principal_mes'] = 'N/A'
+        kpis['gasto_principal_valor'] = 0.0
+        
+    return kpis
+    
+# --- FUNÇÃO PRINCIPAL DE MONTAGEM DO DASHBOARD STREAMLIT ---
+def montar_dashboard(kpis_vendas, kpis_gastos):
+    
+    st.title(f"🎂 Painel de Confeitaria: Mês de {datetime.now().strftime('%B/%Y').upper()}")
+    
+    st.caption(f"Última atualização: **{datetime.now().strftime('%d/%m/%Y %H:%M:%S')}** (Cache de 5 minutos)")
+
+    
+    # --- 1. RESULTADO LÍQUIDO DO MÊS (KPI CHAVE) ---
+    st.header("🎯 Resultado Líquido do Mês Vigente")
+    
+    total_vendas_mes = kpis_vendas['total_mes']
+    total_gastos_mes = kpis_gastos['total_mes']
+    resultado_liquido = total_vendas_mes - total_gastos_mes
+    
+    cor_resultado = "normal" if resultado_liquido >= 0 else "inverse" 
+
+    col_res_a, col_res_b = st.columns([2, 1])
+    
+    col_res_a.metric(
+        label="LUCRO / PREJUÍZO (MÊS)", 
+        value=format_brl(resultado_liquido),
+        delta=f"Total Vendas: {format_brl(total_vendas_mes)} | Total Gastos: {format_brl(total_gastos_mes)}",
+        delta_color=cor_resultado
     )
-    fig_hora.update_xaxes(tick0=0, dtick=1)
-    st.plotly_chart(fig_hora, use_container_width=True)
     
+    # CMV Simplificado (Custos sobre Vendas)
+    if total_vendas_mes > 0:
+        custo_percentual = (total_gastos_mes / total_vendas_mes) * 100
+        col_res_b.metric(
+            label="% CUSTO/RECEITA",
+            value=f"{custo_percentual:.1f}%",
+            help="O custo operacional representa esta porcentagem da receita total. Quanto menor, melhor!"
+        )
+
+    st.divider()
+
+    # --- 2. KPIS DE VENDAS E GASTOS (LINHA PRINCIPAL) ---
+    st.header("💰 Vendas x Despesas (Valores e Quantidades)")
+    
+    col1, col2, col3, col4 = st.columns(4) 
+    
+    # Vendas Hoje (Valor)
+    col1.metric(
+        label="R$ VENDAS HOJE", 
+        value=format_brl(kpis_vendas['total_dia']),
+        delta=f"{kpis_vendas['contagem_dia']} unds vendidas",
+        delta_color="off" 
+    )
+
+    # Vendas Mês (Valor)
+    col2.metric(
+        label="R$ VENDAS MÊS", 
+        value=format_brl(kpis_vendas['total_mes']), 
+        delta=f"{kpis_vendas['contagem_mes']} unds vendidas",
+        delta_color="off"
+    )
+    
+    # Gastos Hoje (Valor)
+    col3.metric(
+        label="R$ GASTOS HOJE", 
+        value=format_brl(kpis_gastos['total_dia']),
+        delta_color="inverse", 
+        help="Gastos registrados na data atual."
+    )
+    
+    # Gastos Mês (Valor)
+    col4.metric(
+        label="R$ GASTOS MÊS", 
+        value=format_brl(kpis_gastos['total_mes']),
+        delta_color="inverse", 
+        help="Gastos totais registrados no mês vigente."
+    )
+    
+    st.divider()
+
+    # --- 3. DETALHES E INSIGHTS RÁPIDOS (UX CLEAN) ---
+    st.header("🍰 Insights Rápidos")
+    
+    col_detalhe_a, col_detalhe_b, col_detalhe_c = st.columns(3)
+    
+    # Vendas: Produto Campeão
+    col_detalhe_a.info(
+        f"**Produto Campeão (Mês):** {kpis_vendas['item_campeao_mes']}. Foque no estoque e marketing dele!"
+    )
+    
+    # Vendas: Pico de Vendas
+    col_detalhe_b.info(
+        f"**Pico de Vendas (Hoje):** {kpis_vendas['pico_hora_dia']}h. Prepare-se para este horário!"
+    )
+
+    # Gastos: Categoria mais cara
+    col_detalhe_c.warning(
+        f"**Maior Gasto (Mês):** {kpis_gastos['categoria_principal_mes']} ({format_brl(kpis_gastos['gasto_principal_valor'])}). Revise este custo!"
+    )
+
 # --- EXECUÇÃO PRINCIPAL STREAMLIT ---
 if __name__ == "__main__":
     
-    # Simula um loading bar/spinner para UX
-    with st.spinner('Puxando os dados da planilha, limpando e analisando...'):
+    with st.spinner('Assando os dados, limpando e unificando Vendas e Gastos...'):
         time.sleep(1) 
         
         try:
-            df_completo, df_mes, df_dia = carregar_e_limpar_dados()
+            df_vendas_mes, df_vendas_dia, df_gastos_mes, df_gastos_dia = carregar_e_limpar_dados()
             
-            # Execução final, se não houver erro no carregamento
-            if not df_completo.empty:
-                montar_dashboard(df_completo, df_mes, df_dia)
+            if not df_vendas_mes.empty or not df_gastos_mes.empty:
+                
+                # 1. Calcula os KPIs
+                kpis_vendas = calcular_kpis_vendas(df_vendas_mes, df_vendas_dia)
+                kpis_gastos = calcular_kpis_gastos(df_gastos_mes, df_gastos_dia)
+                
+                # 2. Monta o Dashboard
+                montar_dashboard(kpis_vendas, kpis_gastos)
+                
             else:
-                 # Esta mensagem de aviso é coberta pelo try/except de carregamento
-                 pass 
+                 st.info("⚠️ Nenhum dado de Vendas ou Gastos encontrado para o mês vigente. Verifique suas planilhas e o Streamlit Secrets.")
 
-        except ValueError as ve:
-            st.error(f"🛑 ERRO CRÍTICO DE DADOS: Ocorreu um problema na limpeza ou filtragem. Detalhes: {ve}")
         except Exception as e:
-            # O st.exception captura e exibe o traceback completo, útil para debug.
-            st.exception(f"Ocorreu um erro INESPERADO. Tente novamente mais tarde.")
+            st.exception(f"Ocorreu um erro INESPERADO. Algo deu errado na sua receita de código! Detalhes: {e}")
