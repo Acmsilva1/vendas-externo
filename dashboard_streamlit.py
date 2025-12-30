@@ -11,12 +11,15 @@ SPREADSHEET_ID_UNIFICADO = "1LuqYrfR8ry_MqCS93Mpj9_7Vu0i9RUTomJU2n69bEug"
 ABA_VENDAS = "vendas"
 ABA_GASTOS = "gastos"
 
-# NOME DAS COLUNAS ESSENCIAIS NA SUA PLANILHA (VERIFIQUE SE ESTÃO CORRETAS!)
-COLUNA_ITEM_VENDIDO = 'PRODUTO'     
-COLUNA_CATEGORIA_GASTO = 'CATEGORIA' 
-COLUNA_CLIENTE = 'DADOS DO COMPRADOR' 
+# NOME DAS COLUNAS ESSENCIAIS NA SUA PLANILHA (CALIBRADO AGORA!)
+# ABA VENDAS
+COLUNA_ITEM_VENDIDO = 'SABORES'          # Item vendido (para Produto Campeão)
+COLUNA_CLIENTE = 'DADOS DO COMPRADOR'    # Cliente (para Melhor Cliente)
 COLUNA_VALOR_VENDA = 'VALOR DA VENDA'
+# ABA GASTOS
+COLUNA_ITEM_GASTO = 'PRODUTO'            # Item de Gasto (para Maior Gasto)
 COLUNA_VALOR_GASTO = 'VALOR'
+# COMUM
 COLUNA_DATA_HORA = 'DATA E HORA'
 
 # --- FUNÇÃO HELPER PARA FORMATAR BRL ---
@@ -101,11 +104,9 @@ def calcular_kpis_vendas(df_mes, df_dia):
     """Calcula KPIs essenciais de VENDAS para o painel clean, incluindo o Cliente."""
     kpis = {}
     
-    # KPIs do Mês
+    # KPIs de Totais
     kpis['total_mes'] = df_mes['Total Limpo'].sum() if not df_mes.empty else 0.0
     kpis['contagem_mes'] = df_mes.shape[0]
-    
-    # KPIs do Dia
     kpis['total_dia'] = df_dia['Total Limpo'].sum() if not df_dia.empty else 0.0
     kpis['contagem_dia'] = df_dia.shape[0]
 
@@ -132,9 +133,11 @@ def calcular_kpis_vendas(df_mes, df_dia):
     # 3. Pico de Vendas (Hoje)
     if not df_dia.empty:
         pico_hora_df = df_dia['Hora'].value_counts()
-        kpis['pico_hora_dia'] = pico_hora_df.index[0] if not pico_hora_df.empty else 'N/A'
+        pico_hora_str = f"{pico_hora_df.index[0]}h" if not pico_hora_df.empty else 'N/A'
     else:
-        kpis['pico_hora_dia'] = 'N/A'
+        pico_hora_str = 'N/A'
+        
+    kpis['pico_hora_dia'] = pico_hora_str
 
     return kpis
 
@@ -147,13 +150,13 @@ def calcular_kpis_gastos(df_mes, df_dia):
     kpis['total_dia'] = df_dia['Total Limpo'].sum() if not df_dia.empty else 0.0
 
     # Dados Adicionais (Insights)
-    if not df_mes.empty and COLUNA_CATEGORIA_GASTO in df_mes.columns:
-        # Categoria de Gasto Principal
-        gasto_por_categoria = df_mes.groupby(COLUNA_CATEGORIA_GASTO)['Total Limpo'].sum().sort_values(ascending=False)
-        kpis['categoria_principal_mes'] = gasto_por_categoria.index[0] 
-        kpis['gasto_principal_valor'] = gasto_por_categoria.iloc[0]
+    if not df_mes.empty and COLUNA_ITEM_GASTO in df_mes.columns:
+        # Item de Gasto Principal (usando a coluna PRODUTO da aba GASTOS)
+        gasto_por_item = df_mes.groupby(COLUNA_ITEM_GASTO)['Total Limpo'].sum().sort_values(ascending=False)
+        kpis['item_principal_gasto_mes'] = gasto_por_item.index[0] 
+        kpis['gasto_principal_valor'] = gasto_por_item.iloc[0]
     else:
-        kpis['categoria_principal_mes'] = f'N/A (Col. {COLUNA_CATEGORIA_GASTO} faltando ou mês vazio)'
+        kpis['item_principal_gasto_mes'] = f'N/A (Col. {COLUNA_ITEM_GASTO} faltando ou mês vazio)'
         kpis['gasto_principal_valor'] = 0.0
         
     return kpis
@@ -238,12 +241,12 @@ def montar_dashboard(kpis_vendas, kpis_gastos):
     
     col_detalhe_a, col_detalhe_b, col_detalhe_c, col_detalhe_d = st.columns(4)
     
-    # Insight 1: Produto Campeão
+    # Insight 1: Produto Campeão (Sabor)
     col_detalhe_a.info(
-        f"**Produto Campeão (Mês):** {kpis_vendas['item_campeao_mes']}"
+        f"**Sabor Mais Vendido (Mês):** {kpis_vendas['item_campeao_mes']}"
     )
     
-    # Insight 2: Melhor Cliente (Retorno ao Info - Controle LGPD Garantido)
+    # Insight 2: Melhor Cliente 
     cliente_valor = format_brl(kpis_vendas['melhor_cliente_gasto'])
     col_detalhe_b.info(
         f"**Melhor Cliente (Mês):** {kpis_vendas['melhor_cliente_mes']} ({cliente_valor})."
@@ -251,13 +254,13 @@ def montar_dashboard(kpis_vendas, kpis_gastos):
     
     # Insight 3: Pico de Vendas
     col_detalhe_c.info(
-        f"**Pico de Vendas (Hoje):** {kpis_vendas['pico_hora_dia']}h. Prepare-se para este horário!"
+        f"**Pico de Vendas (Hoje):** {kpis_vendas['pico_hora_dia']}. Prepare-se para este horário!"
     )
 
-    # Insight 4: Categoria mais cara
+    # Insight 4: Item/Produto de maior Gasto (Ajustado o texto)
     gasto_valor = format_brl(kpis_gastos['gasto_principal_valor'])
     col_detalhe_d.warning(
-        f"**Maior Gasto (Mês):** {kpis_gastos['categoria_principal_mes']} ({gasto_valor}). Revise este custo!"
+        f"**Item de Maior Gasto (Mês):** {kpis_gastos['item_principal_gasto_mes']} ({gasto_valor}). Revise este custo!"
     )
 
 # --- EXECUÇÃO PRINCIPAL STREAMLIT ---
