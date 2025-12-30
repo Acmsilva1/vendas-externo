@@ -145,9 +145,11 @@ def calcular_kpis_gastos(df_mes, df_dia):
     """Calcula KPIs essenciais de GASTOS para o painel clean."""
     kpis = {}
     
-    # KPIs do Mês e Dia
+    # KPIs do Mês e Dia (Contagem Adicionada!)
     kpis['total_mes'] = df_mes['Total Limpo'].sum() if not df_mes.empty else 0.0
+    kpis['contagem_mes'] = df_mes.shape[0]
     kpis['total_dia'] = df_dia['Total Limpo'].sum() if not df_dia.empty else 0.0
+    kpis['contagem_dia'] = df_dia.shape[0]
 
     # Dados Adicionais (Insights)
     if not df_mes.empty and COLUNA_ITEM_GASTO in df_mes.columns:
@@ -218,18 +220,20 @@ def montar_dashboard(kpis_vendas, kpis_gastos):
         delta_color="off"
     )
     
-    # Gastos Hoje (Valor)
+    # Gastos Hoje (Valor) (Contagem Adicionada!)
     col3.metric(
         label="R$ GASTOS HOJE", 
         value=format_brl(kpis_gastos['total_dia']),
+        delta=f"{kpis_gastos['contagem_dia']} registros de gasto",
         delta_color="inverse", 
         help="Gastos registrados na data atual."
     )
     
-    # Gastos Mês (Valor)
+    # Gastos Mês (Valor) (Contagem Adicionada!)
     col4.metric(
         label="R$ GASTOS MÊS", 
         value=format_brl(kpis_gastos['total_mes']),
+        delta=f"{kpis_gastos['contagem_mes']} registros de gasto",
         delta_color="inverse", 
         help="Gastos totais registrados no mês vigente."
     )
