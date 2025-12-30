@@ -31,6 +31,7 @@ def format_brl(value):
 def limpar_coluna_valor(df, coluna_original, coluna_limpa='Total Limpo'):
     """Limpa e converte a coluna de valor para numérico, removendo R$ e separadores."""
     if coluna_original not in df.columns:
+        # Erro crítico que será capturado no carregar_e_limpar_dados
         raise ValueError(f"A coluna de valor '{coluna_original}' não foi encontrada na aba. Verifique o nome da coluna na planilha!")
 
     df[coluna_limpa] = (
@@ -48,6 +49,7 @@ def limpar_coluna_valor(df, coluna_original, coluna_limpa='Total Limpo'):
 def processar_data(df, coluna_data_hora):
     """Converte e extrai componentes de data/hora (Assume formato %d/%m/%Y %H:%M:%S)."""
     if coluna_data_hora not in df.columns:
+        # Erro crítico que será capturado no carregar_e_limpar_dados
         raise ValueError(f"A coluna de data/hora '{coluna_data_hora}' não foi encontrada na aba. Verifique o nome da coluna na planilha!")
         
     df['Data/Hora'] = pd.to_datetime(df[coluna_data_hora], errors='coerce', format='%d/%m/%Y %H:%M:%S')
@@ -142,10 +144,10 @@ def calcular_kpis_vendas(df_mes, df_dia):
     return kpis
 
 def calcular_kpis_gastos(df_mes, df_dia):
-    """Calcula KPIs essenciais de GASTOS para o painel clean."""
+    """Calcula KPIs essenciais de GASTOS para o painel clean, incluindo a contagem."""
     kpis = {}
     
-    # KPIs do Mês e Dia (Contagem Adicionada!)
+    # KPIs do Mês e Dia (Contagem Adicionada)
     kpis['total_mes'] = df_mes['Total Limpo'].sum() if not df_mes.empty else 0.0
     kpis['contagem_mes'] = df_mes.shape[0]
     kpis['total_dia'] = df_dia['Total Limpo'].sum() if not df_dia.empty else 0.0
@@ -166,6 +168,7 @@ def calcular_kpis_gastos(df_mes, df_dia):
 # --- FUNÇÃO PRINCIPAL DE MONTAGEM DO DASHBOARD STREAMLIT ---
 def montar_dashboard(kpis_vendas, kpis_gastos):
     
+    # Configurações de UX (Dark Mode) - Se você criou o arquivo config.toml
     st.title(f"🎂 Painel de Confeitaria: Mês de {datetime.now().strftime('%B/%Y').upper()}")
     
     st.caption(f"Última atualização: **{datetime.now().strftime('%d/%m/%Y %H:%M:%S')}** (Cache de 5 minutos)")
