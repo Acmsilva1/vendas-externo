@@ -31,7 +31,6 @@ def format_brl(value):
 def limpar_coluna_valor(df, coluna_original, coluna_limpa='Total Limpo'):
     """Limpa e converte a coluna de valor para numérico, removendo R$ e separadores."""
     if coluna_original not in df.columns:
-        # Se a coluna de valor estiver faltando, joga um erro de configuração
         raise ValueError(f"A coluna de valor '{coluna_original}' não foi encontrada na aba. Verifique o nome da coluna na planilha!")
 
     df[coluna_limpa] = (
@@ -68,7 +67,7 @@ def filtrar_por_mes_e_dia(df, data_atual: date):
     return df_mes, df_dia
 
 
-@st.cache_data(ttl=300) 
+@st.cache_data(ttl=0) # CORREÇÃO: TTL AGORA É ZERO (Cache desabilitado)
 def carregar_e_limpar_dados():
     st.set_page_config(layout="wide", page_title="💰 Dashboard Financeiro Confeitaria")
     
@@ -92,14 +91,11 @@ def carregar_e_limpar_dados():
         df_gastos_mes, df_gastos_dia = filtrar_por_mes_e_dia(df_gastos, data_atual)
         
     except ValueError as ve:
-        # Este erro é crítico (coluna faltando) e deve ser exibido.
         st.error(f"ERRO CRÍTICO DE CONFIGURAÇÃO DE COLUNA: {ve}") 
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame() 
     except Exception as e:
-        # ESTA É A CORREÇÃO: Silencia o erro de conexão/autenticação (como 404)
-        # e retorna DataFrames vazios para acionar a mensagem de standby.
-        # st.error(f"ERRO DE CONEXÃO/AUTENTICAÇÃO: Verifique o ID, abas e Secret. Detalhes: {e}") <--- ANTES
-        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame() # <--- AGORA (Silêncio)
+        # Silencia o erro de conexão/autenticação e retorna DataFrames vazios para acionar o standby.
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame() 
 
 
     return df_vendas_mes, df_vendas_dia, df_gastos_mes, df_gastos_dia
@@ -175,7 +171,7 @@ def montar_dashboard(kpis_vendas, kpis_gastos):
     
     st.title(f"🎂 Painel de Confeitaria: Mês de {datetime.now().strftime('%B/%Y').upper()}")
     
-    st.caption(f"Última atualização: **{datetime.now().strftime('%d/%m/%Y %H:%M:%S')}** (Cache de 5 minutos)")
+    st.caption(f"Última atualização: **{datetime.now().strftime('%d/%m/%Y %H:%M:%S')}** (Recarga automática a cada 20s)")
 
     
     # --- 1. RESULTADO LÍQUIDO DO MÊS (KPI CHAVE) ---
@@ -203,6 +199,11 @@ def montar_dashboard(kpis_vendas, kpis_gastos):
             value=f"{custo_percentual:.1f}%",
             help="O custo operacional representa esta porcentagem da receita total."
         )
+        
+    # Sugestão de UX para dados incompletos
+    if kpis_gastos['total_mes'] == 0 and total_vendas_mes > 0:
+         st.warning("Atenção: Os gastos do mês ainda não foram registrados! O lucro exibido é provisório (Vendas - 0).")
+
 
     st.divider()
 
@@ -284,7 +285,6 @@ if __name__ == "__main__":
             df_vendas_mes, df_vendas_dia, df_gastos_mes, df_gastos_dia = carregar_e_limpar_dados()
             
             # Checa se há dados (vendas ou gastos) para o mês atual. 
-            # Isso é True se o mês virou, ou se houve erro de conexão (devido à nossa correção).
             dados_do_mes_encontrados = not df_vendas_mes.empty or not df_gastos_mes.empty
             
             if dados_do_mes_encontrados:
@@ -296,10 +296,18 @@ if __name__ == "__main__":
                 # 2. Monta o Dashboard
                 montar_dashboard(kpis_vendas, kpis_gastos)
                 
+                # --- NOVO BLOCO: RECARGA AUTOMÁTICA ---
+                # A tela de dados foi montada, então programamos a próxima recarga
+                time.sleep(20) # Aguarda 20 segundos
+                st.rerun() # Força a reexecução do script (Streamlit > 1.25.0)
+
             else:
-                 # Esta é a única mensagem exibida se não houver dados no mês OU se a conexão falhou
+                 # Mensagem de Standby (Aguardando dados ou erro de conexão)
                  st.info("Novo mês! Aguardando dados para análise.")
+                 
+                 # Se estiver em standby, espera 20s e tenta carregar novamente.
+                 time.sleep(20) 
+                 st.rerun()
 
         except Exception as e:
-            # Este bloco é para erros realmente inesperados (quebrados fora das funções tratadas)
             st.exception(f"Ocorreu um erro INESPERADO. Algo deu errado na sua receita de código! Detalhes: {e}")
