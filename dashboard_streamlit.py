@@ -71,45 +71,34 @@ def filtrar_por_mes_e_dia(df, data_atual: date):
 
 @st.cache_data(ttl=20) 
 def carregar_e_limpar_dados():
-    st.set_page_config(layout="wide", page_title="💰 Controle de vendas diário")
+    # ... (código de configuração e autenticação) ...
     
-    data_atual = datetime.now().date()
+    # Inicializa DataFrames de Gastos vazios
+    df_gastos_mes = pd.DataFrame()
+    df_gastos_dia = pd.DataFrame()
     
+    # 2. CARREGAMENTO E LIMPEZA DE VENDAS (CRÍTICO)
     try:
-        # 1. AUTENTICAÇÃO
-        gc = gspread.service_account_from_dict(st.secrets["gcp_service_account"])
-        sh = gc.open_by_key(SPREADSHEET_ID_UNIFICADO)
-        
-        # Inicializa DataFrames de Gastos vazios
-        df_gastos_mes = pd.DataFrame()
-        df_gastos_dia = pd.DataFrame()
-        
-        # 2. CARREGAMENTO E LIMPEZA DE VENDAS
-        # O erro aqui é CRÍTICO (se não tem coluna de VENDAS, o dashboard não serve)
-        try:
-            df_vendas = pd.DataFrame(sh.worksheet(ABA_VENDAS).get_all_records())
-            df_vendas = limpar_coluna_valor(df_vendas, COLUNA_VALOR_VENDA) 
-            df_vendas = processar_data(df_vendas, COLUNA_DATA_HORA)
-            df_vendas_mes, df_vendas_dia = filtrar_por_mes_e_dia(df_vendas, data_atual)
-        except ValueError as ve:
-            # Se VENDAS falhar por coluna, disparamos um erro principal, pois é o foco
-            raise ValueError(f"Erro na aba VENDAS: {ve}")
+        # ... (processamento de vendas) ...
+        df_vendas_mes, df_vendas_dia = filtrar_por_mes_e_dia(df_vendas, data_atual)
+    except ValueError as ve:
+        raise ValueError(f"Erro CRÍTICO na aba VENDAS: {ve}")
 
 
-        # 3. CARREGAMENTO E LIMPEZA DE GASTOS
-        # O erro de coluna aqui não é CRÍTICO, apenas se a conexão falhar
-        try:
-            df_gastos = pd.DataFrame(sh.worksheet(ABA_GASTOS).get_all_records())
-            df_gastos = limpar_coluna_valor(df_gastos, COLUNA_VALOR_GASTO) 
-            df_gastos = processar_data(df_gastos, COLUNA_DATA_HORA) 
-            df_gastos_mes, df_gastos_dia = filtrar_por_mes_e_dia(df_gastos, data_atual)
-        except ValueError as ve:
-             # AJUSTE: Se Gastos falhar por coluna vazia ou falta de dados, 
-             # APENAS avisamos e continuamos com DataFrames vazios (df_gastos_mes/dia já estão vazios).
-             st.warning(f"⚠️ Atenção na aba GASTOS: Falha ao processar colunas ('{COLUNA_VALOR_GASTO}' ou data ausente). Continuando apenas com Vendas. Detalhes: {ve}")
-             # Garante que os DataFrames vazios sejam passados
-             df_gastos_mes = pd.DataFrame()
-             df_gastos_dia = pd.DataFrame()
+    # 3. CARREGAMENTO E LIMPEZA DE GASTOS (NÃO CRÍTICO)
+    try:
+        df_gastos = pd.DataFrame(sh.worksheet(ABA_GASTOS).get_all_records())
+        df_gastos = limpar_coluna_valor(df_gastos, COLUNA_VALOR_GASTO) 
+        df_gastos = processar_data(df_gastos, COLUNA_DATA_HORA) 
+        df_gastos_mes, df_gastos_dia = filtrar_por_mes_e_dia(df_gastos, data_atual)
+    except ValueError as ve:
+         # AJUSTE FINAL: Mensagem curta (assertiva) + Detalhe dinâmico (governança).
+         # Se a aba estiver vazia ou com erro de coluna, o erro 've' será a causa.
+         st.warning(f"⚠️ Sem dados de gasto para análise. Detalhe Técnico: {ve}")
+         
+         # Garante que os DataFrames vazios sejam passados
+         df_gastos_mes = pd.DataFrame()
+         df_gastos_dia = pd.DataFrame()
 
 
     except ValueError as ve:
@@ -313,7 +302,7 @@ if __name__ == "__main__":
                 montar_dashboard(kpis_vendas, kpis_gastos)
                 
             else:
-                 st.info("⚠️ Aguardando dados para análise! O mês parece estar de folga. Adicione Vendas ou Gastos para começar a trabalhar.")
+                 st.info("⚠️ Aguardando dados para análise!")
 
         except Exception as e:
             st.exception(f"Ocorreu um erro INESPERADO. Algo deu errado na sua receita de código! Detalhes: {e}")
