@@ -68,8 +68,8 @@ def filtrar_por_mes_e_dia(df, data_atual: date):
     
     return df_mes, df_dia
 
-
-@st.cache_data(ttl=300) 
+# MUDANÇA AQUI: TTL DE 300 PARA 20 SEGUNDOS
+@st.cache_data(ttl=20) 
 def carregar_e_limpar_dados():
     st.set_page_config(layout="wide", page_title="💰 Controle de vendas diário")
     
@@ -157,8 +157,9 @@ def calcular_kpis_gastos(df_mes, df_dia):
     if not df_mes.empty and COLUNA_ITEM_GASTO in df_mes.columns:
         # Item de Gasto Principal (usando a coluna PRODUTO da aba GASTOS)
         gasto_por_item = df_mes.groupby(COLUNA_ITEM_GASTO)['Total Limpo'].sum().sort_values(ascending=False)
-        kpis['item_principal_gasto_mes'] = gasto_por_item.index[0] 
-        kpis['gasto_principal_valor'] = gasto_por_item.iloc[0]
+        # Assegura que não pegaremos de um GroupBy vazio
+        kpis['item_principal_gasto_mes'] = gasto_por_item.index[0] if not gasto_por_item.empty else 'N/A'
+        kpis['gasto_principal_valor'] = gasto_por_item.iloc[0] if not gasto_por_item.empty else 0.0
     else:
         kpis['item_principal_gasto_mes'] = f'N/A (Col. {COLUNA_ITEM_GASTO} faltando ou mês vazio)'
         kpis['gasto_principal_valor'] = 0.0
@@ -171,7 +172,7 @@ def montar_dashboard(kpis_vendas, kpis_gastos):
     # Configurações de UX (Dark Mode) - Se você criou o arquivo config.toml
     st.title(f"🎂 Painel de Confeitaria: Mês de {datetime.now().strftime('%B/%Y').upper()}")
     
-    st.caption(f"Última atualização: **{datetime.now().strftime('%d/%m/%Y %H:%M:%S')}** (Cache de 5 minutos)")
+    st.caption(f"Última atualização: **{datetime.now().strftime('%d/%m/%Y %H:%M:%S')}** (Cache de 20 segundos)")
 
     
     # --- 1. RESULTADO LÍQUIDO DO MÊS (KPI CHAVE) ---
@@ -273,12 +274,14 @@ def montar_dashboard(kpis_vendas, kpis_gastos):
 # --- EXECUÇÃO PRINCIPAL STREAMLIT ---
 if __name__ == "__main__":
     
+    # Removido o time.sleep(1) para uma inicialização mais rápida após o spinner.
     with st.spinner('Assando os dados, limpando e unificando Vendas e Gastos...'):
-        time.sleep(1) 
         
         try:
             df_vendas_mes, df_vendas_dia, df_gastos_mes, df_gastos_dia = carregar_e_limpar_dados()
             
+            # Condição para exibir o dashboard: Basta que haja dados de Vendas OU Gastos no Mês.
+            # Se for um mês novo e só tiver vendas, ele prossegue. O KPI de Gastos vazios será 0/N/A.
             if not df_vendas_mes.empty or not df_gastos_mes.empty:
                 
                 # 1. Calcula os KPIs
@@ -289,7 +292,7 @@ if __name__ == "__main__":
                 montar_dashboard(kpis_vendas, kpis_gastos)
                 
             else:
-                 st.info("⚠️ Aguardando dados para análise!")
+                 st.info("⚠️ Aguardando dados para análise! O mês parece estar de folga. Adicione Vendas ou Gastos para começar a trabalhar.")
 
         except Exception as e:
             st.exception(f"Ocorreu um erro INESPERADO. Algo deu errado na sua receita de código! Detalhes: {e}")
