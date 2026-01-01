@@ -67,7 +67,7 @@ def filtrar_por_mes_e_dia(df, data_atual: date):
     return df_mes, df_dia
 
 
-@st.cache_data(ttl=0) # CORREÇÃO: TTL AGORA É ZERO (Cache desabilitado)
+@st.cache_data(ttl=0) # Cache desabilitado para o tempo real
 def carregar_e_limpar_dados():
     st.set_page_config(layout="wide", page_title="💰 Dashboard Financeiro Confeitaria")
     
@@ -94,7 +94,7 @@ def carregar_e_limpar_dados():
         st.error(f"ERRO CRÍTICO DE CONFIGURAÇÃO DE COLUNA: {ve}") 
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame() 
     except Exception as e:
-        # Silencia o erro de conexão/autenticação e retorna DataFrames vazios para acionar o standby.
+        # Silencia o erro de conexão/autenticação e retorna DataFrames vazios
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame() 
 
 
@@ -110,7 +110,7 @@ def calcular_kpis_vendas(df_mes, df_dia):
     kpis['total_dia'] = df_dia['Total Limpo'].sum() if not df_dia.empty else 0.0
     kpis['contagem_dia'] = df_dia.shape[0]
 
-    # --- INSIGHTS ROBUSTOS (CORRIGIDOS PARA DATAFRAMES VAZIOS) ---
+    # --- INSIGHTS ROBUSTOS ---
 
     # 1. Produto Campeão (Mês)
     kpis['item_campeao_mes'] = 'N/A'
@@ -278,8 +278,11 @@ def montar_dashboard(kpis_vendas, kpis_gastos):
 # --- EXECUÇÃO PRINCIPAL STREAMLIT (FINAL) ---
 if __name__ == "__main__":
     
+    RELOAD_INTERVAL_SECONDS = 20 # Intervalo de recarga
+    
+    # 1. Carregamento de Dados (Com Spinner)
     with st.spinner('Assando os dados, limpando e unificando Vendas e Gastos...'):
-        time.sleep(1) 
+        time.sleep(1) # Pequeno sleep para o spinner ser visível
         
         try:
             df_vendas_mes, df_vendas_dia, df_gastos_mes, df_gastos_dia = carregar_e_limpar_dados()
@@ -287,27 +290,30 @@ if __name__ == "__main__":
             # Checa se há dados (vendas ou gastos) para o mês atual. 
             dados_do_mes_encontrados = not df_vendas_mes.empty or not df_gastos_mes.empty
             
-            if dados_do_mes_encontrados:
-                
-                # 1. Calcula os KPIs
-                kpis_vendas = calcular_kpis_vendas(df_vendas_mes, df_vendas_dia)
-                kpis_gastos = calcular_kpis_gastos(df_gastos_mes, df_gastos_dia)
-                
-                # 2. Monta o Dashboard
-                montar_dashboard(kpis_vendas, kpis_gastos)
-                
-                # --- NOVO BLOCO: RECARGA AUTOMÁTICA ---
-                # A tela de dados foi montada, então programamos a próxima recarga
-                time.sleep(20) # Aguarda 20 segundos
-                st.rerun() # Força a reexecução do script (Streamlit > 1.25.0)
-
-            else:
-                 # Mensagem de Standby (Aguardando dados ou erro de conexão)
-                 st.info("Novo mês! Aguardando dados para análise.")
-                 
-                 # Se estiver em standby, espera 20s e tenta carregar novamente.
-                 time.sleep(20) 
-                 st.rerun()
-
         except Exception as e:
-            st.exception(f"Ocorreu um erro INESPERADO. Algo deu errado na sua receita de código! Detalhes: {e}")
+            # Captura erro inesperado de baixo nível durante o carregamento
+            st.exception(f"Ocorreu um erro INESPERADO durante o carregamento. Detalhes: {e}")
+            dados_do_mes_encontrados = False
+            
+    # 2. Renderização do Dashboard (Fora do Spinner)
+    # O spinner já sumiu!
+    
+    if dados_do_mes_encontrados:
+        
+        # 1. Calcula os KPIs
+        kpis_vendas = calcular_kpis_vendas(df_vendas_mes, df_vendas_dia)
+        kpis_gastos = calcular_kpis_gastos(df_gastos_mes, df_gastos_dia)
+        
+        # 2. Monta o Dashboard
+        montar_dashboard(kpis_vendas, kpis_gastos)
+        
+    else:
+         # Mensagem de Standby
+         st.info("Novo mês! Aguardando dados para análise.")
+
+    # 3. Loop de Recarga (Acontece APÓS TODA A RENDERIZAÇÃO)
+    # A tela é totalmente desenhada (Spinner sumiu, dados ou Standby apareceram)
+    # Agora, pausamos o script e forçamos a recarga sem travar o UI.
+    
+    time.sleep(RELOAD_INTERVAL_SECONDS) 
+    st.rerun()
