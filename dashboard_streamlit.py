@@ -31,7 +31,7 @@ def format_brl(value):
 def limpar_coluna_valor(df, coluna_original, coluna_limpa='Total Limpo'):
     """Limpa e converte a coluna de valor para numérico, removendo R$ e separadores."""
     if coluna_original not in df.columns:
-        # Se essa coluna não existir, o erro é jogado antes do filtro de data
+        # Se a coluna de valor estiver faltando, joga um erro de configuração
         raise ValueError(f"A coluna de valor '{coluna_original}' não foi encontrada na aba. Verifique o nome da coluna na planilha!")
 
     df[coluna_limpa] = (
@@ -47,7 +47,7 @@ def limpar_coluna_valor(df, coluna_original, coluna_limpa='Total Limpo'):
     return df
 
 def processar_data(df, coluna_data_hora):
-    """Converte e extrai componentes de data/hora (Assume formato %d/%m/%Y %H:%M:%S)."""
+    """Converte e extrai componentes de data/hora."""
     if coluna_data_hora not in df.columns:
         raise ValueError(f"A coluna de data/hora '{coluna_data_hora}' não foi encontrada na aba. Verifique o nome da coluna na planilha!")
         
@@ -92,13 +92,14 @@ def carregar_e_limpar_dados():
         df_gastos_mes, df_gastos_dia = filtrar_por_mes_e_dia(df_gastos, data_atual)
         
     except ValueError as ve:
-        st.error(f"ERRO CRÍTICO DE CONFIGURAÇÃO DE COLUNA: {ve}")
-        # Retorna DataFrames vazios em caso de erro de coluna
+        # Este erro é crítico (coluna faltando) e deve ser exibido.
+        st.error(f"ERRO CRÍTICO DE CONFIGURAÇÃO DE COLUNA: {ve}") 
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame() 
     except Exception as e:
-        st.error(f"ERRO DE CONEXÃO/AUTENTICAÇÃO: Verifique o ID, abas e Secret. Detalhes: {e}")
-        # Retorna DataFrames vazios em caso de erro de conexão
-        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+        # ESTA É A CORREÇÃO: Silencia o erro de conexão/autenticação (como 404)
+        # e retorna DataFrames vazios para acionar a mensagem de standby.
+        # st.error(f"ERRO DE CONEXÃO/AUTENTICAÇÃO: Verifique o ID, abas e Secret. Detalhes: {e}") <--- ANTES
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame() # <--- AGORA (Silêncio)
 
 
     return df_vendas_mes, df_vendas_dia, df_gastos_mes, df_gastos_dia
@@ -107,13 +108,13 @@ def calcular_kpis_vendas(df_mes, df_dia):
     """Calcula KPIs essenciais de VENDAS para o painel clean, com robustez a DataFrames vazios."""
     kpis = {}
     
-    # KPIs de Totais
+    # KPIs de Totais (Seguros)
     kpis['total_mes'] = df_mes['Total Limpo'].sum() if not df_mes.empty else 0.0
     kpis['contagem_mes'] = df_mes.shape[0]
     kpis['total_dia'] = df_dia['Total Limpo'].sum() if not df_dia.empty else 0.0
     kpis['contagem_dia'] = df_dia.shape[0]
 
-    # --- INSIGHTS ROBUSTOS ---
+    # --- INSIGHTS ROBUSTOS (CORRIGIDOS PARA DATAFRAMES VAZIOS) ---
 
     # 1. Produto Campeão (Mês)
     kpis['item_campeao_mes'] = 'N/A'
@@ -122,7 +123,7 @@ def calcular_kpis_vendas(df_mes, df_dia):
              mode_result = df_mes[COLUNA_ITEM_VENDIDO].mode()
              kpis['item_campeao_mes'] = mode_result.iloc[0] if not mode_result.empty else 'Nenhum'
         except Exception:
-             kpis['item_campeao_mes'] = 'N/A' # Silencia a falha
+             kpis['item_campeao_mes'] = 'N/A' 
 
     # 2. Melhor Cliente (Mês)
     kpis['melhor_cliente_mes'] = 'N/A'
@@ -134,7 +135,7 @@ def calcular_kpis_vendas(df_mes, df_dia):
             kpis['melhor_cliente_gasto'] = melhor_cliente_df.iloc[0] if not melhor_cliente_df.empty else 0.0
         except Exception:
             kpis['melhor_cliente_mes'] = 'N/A'
-            kpis['melhor_cliente_gasto'] = 0.0 # Silencia a falha
+            kpis['melhor_cliente_gasto'] = 0.0
 
     # 3. Pico de Vendas (Hoje)
     pico_hora_str = 'N/A'
@@ -149,7 +150,7 @@ def calcular_kpis_gastos(df_mes, df_dia):
     """Calcula KPIs essenciais de GASTOS para o painel clean, com robustez a DataFrames vazios."""
     kpis = {}
     
-    # KPIs do Mês e Dia (Contagem Adicionada)
+    # KPIs do Mês e Dia (Seguros)
     kpis['total_mes'] = df_mes['Total Limpo'].sum() if not df_mes.empty else 0.0
     kpis['contagem_mes'] = df_mes.shape[0]
     kpis['total_dia'] = df_dia['Total Limpo'].sum() if not df_dia.empty else 0.0
@@ -165,7 +166,7 @@ def calcular_kpis_gastos(df_mes, df_dia):
             kpis['gasto_principal_valor'] = gasto_por_item.iloc[0] if not gasto_por_item.empty else 0.0
         except Exception:
              kpis['item_principal_gasto_mes'] = 'N/A' 
-             kpis['gasto_principal_valor'] = 0.0 # Silencia a falha
+             kpis['gasto_principal_valor'] = 0.0
         
     return kpis
     
@@ -226,7 +227,7 @@ def montar_dashboard(kpis_vendas, kpis_gastos):
         delta_color="off"
     )
     
-    # Gastos Hoje (Valor) (Contagem Adicionada!)
+    # Gastos Hoje (Valor) 
     col3.metric(
         label="R$ GASTOS HOJE", 
         value=format_brl(kpis_gastos['total_dia']),
@@ -235,7 +236,7 @@ def montar_dashboard(kpis_vendas, kpis_gastos):
         help="Gastos registrados na data atual."
     )
     
-    # Gastos Mês (Valor) (Contagem Adicionada!)
+    # Gastos Mês (Valor) 
     col4.metric(
         label="R$ GASTOS MÊS", 
         value=format_brl(kpis_gastos['total_mes']),
@@ -267,7 +268,7 @@ def montar_dashboard(kpis_vendas, kpis_gastos):
         f"**Pico de Vendas (Hoje):** {kpis_vendas['pico_hora_dia']}. Prepare-se para este horário!"
     )
 
-    # Insight 4: Item/Produto de maior Gasto (Ajustado o texto)
+    # Insight 4: Item/Produto de maior Gasto 
     gasto_valor = format_brl(kpis_gastos['gasto_principal_valor'])
     col_detalhe_d.warning(
         f"**Item de Maior Gasto (Mês):** {kpis_gastos['item_principal_gasto_mes']} ({gasto_valor}). Revise este custo!"
@@ -282,12 +283,13 @@ if __name__ == "__main__":
         try:
             df_vendas_mes, df_vendas_dia, df_gastos_mes, df_gastos_dia = carregar_e_limpar_dados()
             
-            # Checa se há dados (vendas ou gastos) para o mês atual
+            # Checa se há dados (vendas ou gastos) para o mês atual. 
+            # Isso é True se o mês virou, ou se houve erro de conexão (devido à nossa correção).
             dados_do_mes_encontrados = not df_vendas_mes.empty or not df_gastos_mes.empty
             
             if dados_do_mes_encontrados:
                 
-                # 1. Calcula os KPIs (Agora robusto contra DataFrames vazios)
+                # 1. Calcula os KPIs
                 kpis_vendas = calcular_kpis_vendas(df_vendas_mes, df_vendas_dia)
                 kpis_gastos = calcular_kpis_gastos(df_gastos_mes, df_gastos_dia)
                 
@@ -295,8 +297,9 @@ if __name__ == "__main__":
                 montar_dashboard(kpis_vendas, kpis_gastos)
                 
             else:
-                 # MENSAGEM DE STANDBY (Sem exceções indesejadas)
+                 # Esta é a única mensagem exibida se não houver dados no mês OU se a conexão falhou
                  st.info("Novo mês! Aguardando dados para análise.")
 
         except Exception as e:
+            # Este bloco é para erros realmente inesperados (quebrados fora das funções tratadas)
             st.exception(f"Ocorreu um erro INESPERADO. Algo deu errado na sua receita de código! Detalhes: {e}")
