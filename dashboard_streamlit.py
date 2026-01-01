@@ -68,8 +68,7 @@ def filtrar_por_mes_e_dia(df, data_atual: date):
     
     return df_mes, df_dia
 
-# MUDANÇA: Cache de 20 segundos
-@st.cache_data(ttl=20) 
+# MUDANÇA: REMOÇÃO TOTAL DO CACHE (@st.cache_data)
 def carregar_e_limpar_dados():
     st.set_page_config(layout="wide", page_title="💰 Controle de vendas diário")
     
@@ -102,7 +101,7 @@ def carregar_e_limpar_dados():
             df_gastos = processar_data(df_gastos, COLUNA_DATA_HORA) 
             df_gastos_mes, df_gastos_dia = filtrar_por_mes_e_dia(df_gastos, data_atual)
         except ValueError as ve:
-             # MUDANÇA: Mensagem assertiva + Detalhe dinâmico do erro (governança).
+             # Mensagem assertiva + Detalhe dinâmico do erro (governança).
              st.warning(f"⚠️ Sem dados de gasto para análise. Detalhe Técnico: {ve}")
              # Garante que os DataFrames vazios sejam passados
              df_gastos_mes = pd.DataFrame()
@@ -193,11 +192,17 @@ def calcular_kpis_gastos(df_mes, df_dia):
 # --- FUNÇÃO PRINCIPAL DE MONTAGEM DO DASHBOARD STREAMLIT ---
 def montar_dashboard(kpis_vendas, kpis_gastos):
     
-    # Configurações de UX (Dark Mode) - Se você criou o arquivo config.toml
+    # MUDANÇA: BOTÃO BEM VISÍVEL NO TOPO
+    # type="primary" o deixa azul (ou a cor primária do seu tema) e bem destacado
+    if st.button("🔴 CLIQUE AQUI PARA ATUALIZAR DADOS AGORA (FORÇAR RECARGA)", type="primary"):
+        st.rerun() # Força a re-execução do script inteiro, buscando novos dados
+    
     st.title(f"🎂 Painel de Confeitaria: Mês de {datetime.now().strftime('%B/%Y').upper()}")
     
-    st.caption(f"Última atualização: **{datetime.now().strftime('%d/%m/%Y %H:%M:%S')}** (Cache de 20 segundos)")
-
+    # MANTEM a última atualização, mas remove a menção ao cache
+    st.caption(f"Última atualização de dados da planilha: **{datetime.now().strftime('%d/%m/%Y %H:%M:%S')}**")
+    
+    st.divider() 
     
     # --- 1. RESULTADO LÍQUIDO DO MÊS (KPI CHAVE) ---
     st.header("🎯 Resultado Líquido do Mês Vigente")
