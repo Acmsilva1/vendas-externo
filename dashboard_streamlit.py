@@ -68,7 +68,7 @@ def filtrar_por_mes_e_dia(df, data_atual: date):
     
     return df_mes, df_dia
 
-# MUDANÇA AQUI: TTL DE 300 PARA 20 SEGUNDOS
+
 @st.cache_data(ttl=20) 
 def carregar_e_limpar_dados():
     st.set_page_config(layout="wide", page_title="💰 Controle de vendas diário")
@@ -79,28 +79,51 @@ def carregar_e_limpar_dados():
         # 1. AUTENTICAÇÃO
         gc = gspread.service_account_from_dict(st.secrets["gcp_service_account"])
         sh = gc.open_by_key(SPREADSHEET_ID_UNIFICADO)
-
+        
+        # Inicializa DataFrames de Gastos vazios
+        df_gastos_mes = pd.DataFrame()
+        df_gastos_dia = pd.DataFrame()
+        
         # 2. CARREGAMENTO E LIMPEZA DE VENDAS
-        df_vendas = pd.DataFrame(sh.worksheet(ABA_VENDAS).get_all_records())
-        df_vendas = limpar_coluna_valor(df_vendas, COLUNA_VALOR_VENDA) 
-        df_vendas = processar_data(df_vendas, COLUNA_DATA_HORA)
-        df_vendas_mes, df_vendas_dia = filtrar_por_mes_e_dia(df_vendas, data_atual)
+        # O erro aqui é CRÍTICO (se não tem coluna de VENDAS, o dashboard não serve)
+        try:
+            df_vendas = pd.DataFrame(sh.worksheet(ABA_VENDAS).get_all_records())
+            df_vendas = limpar_coluna_valor(df_vendas, COLUNA_VALOR_VENDA) 
+            df_vendas = processar_data(df_vendas, COLUNA_DATA_HORA)
+            df_vendas_mes, df_vendas_dia = filtrar_por_mes_e_dia(df_vendas, data_atual)
+        except ValueError as ve:
+            # Se VENDAS falhar por coluna, disparamos um erro principal, pois é o foco
+            raise ValueError(f"Erro na aba VENDAS: {ve}")
+
 
         # 3. CARREGAMENTO E LIMPEZA DE GASTOS
-        df_gastos = pd.DataFrame(sh.worksheet(ABA_GASTOS).get_all_records())
-        df_gastos = limpar_coluna_valor(df_gastos, COLUNA_VALOR_GASTO) 
-        df_gastos = processar_data(df_gastos, COLUNA_DATA_HORA) 
-        df_gastos_mes, df_gastos_dia = filtrar_por_mes_e_dia(df_gastos, data_atual)
-        
+        # O erro de coluna aqui não é CRÍTICO, apenas se a conexão falhar
+        try:
+            df_gastos = pd.DataFrame(sh.worksheet(ABA_GASTOS).get_all_records())
+            df_gastos = limpar_coluna_valor(df_gastos, COLUNA_VALOR_GASTO) 
+            df_gastos = processar_data(df_gastos, COLUNA_DATA_HORA) 
+            df_gastos_mes, df_gastos_dia = filtrar_por_mes_e_dia(df_gastos, data_atual)
+        except ValueError as ve:
+             # AJUSTE: Se Gastos falhar por coluna vazia ou falta de dados, 
+             # APENAS avisamos e continuamos com DataFrames vazios (df_gastos_mes/dia já estão vazios).
+             st.warning(f"⚠️ Atenção na aba GASTOS: Falha ao processar colunas ('{COLUNA_VALOR_GASTO}' ou data ausente). Continuando apenas com Vendas. Detalhes: {ve}")
+             # Garante que os DataFrames vazios sejam passados
+             df_gastos_mes = pd.DataFrame()
+             df_gastos_dia = pd.DataFrame()
+
+
     except ValueError as ve:
-        st.error(f"ERRO CRÍTICO DE CONFIGURAÇÃO DE COLUNA: {ve}")
+        # Erro crítico de configuração (geralmente da aba VENDAS)
+        st.error(f"ERRO CRÍTICO DE CONFIGURAÇÃO: {ve}")
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
     except Exception as e:
+        # Erro de conexão/autenticação
         st.error(f"ERRO DE CONEXÃO/AUTENTICAÇÃO: Verifique o ID, abas e Secret. Detalhes: {e}")
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
 
     return df_vendas_mes, df_vendas_dia, df_gastos_mes, df_gastos_dia
+# ... (restante do código idêntico)
 
 def calcular_kpis_vendas(df_mes, df_dia):
     """Calcula KPIs essenciais de VENDAS para o painel clean, incluindo o Cliente."""
@@ -274,14 +297,12 @@ def montar_dashboard(kpis_vendas, kpis_gastos):
 # --- EXECUÇÃO PRINCIPAL STREAMLIT ---
 if __name__ == "__main__":
     
-    # Removido o time.sleep(1) para uma inicialização mais rápida após o spinner.
     with st.spinner('Assando os dados, limpando e unificando Vendas e Gastos...'):
         
         try:
             df_vendas_mes, df_vendas_dia, df_gastos_mes, df_gastos_dia = carregar_e_limpar_dados()
             
             # Condição para exibir o dashboard: Basta que haja dados de Vendas OU Gastos no Mês.
-            # Se for um mês novo e só tiver vendas, ele prossegue. O KPI de Gastos vazios será 0/N/A.
             if not df_vendas_mes.empty or not df_gastos_mes.empty:
                 
                 # 1. Calcula os KPIs
