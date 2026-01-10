@@ -3,11 +3,10 @@ import gspread
 from datetime import datetime, date
 import streamlit as st 
 import time 
-import pytz # Importado para o fuso horário
+import pytz # RE-ADICIONADO: Para controle de fuso horário
 
 # --- CONFIGURAÇÕES FIXAS ---
 # ID da planilha fornecido pelo usuário
-# CORRIGIDO: Retornando ao ID original que estava funcionando!
 SPREADSHEET_ID_UNIFICADO = "1LuqYrfR8ry_MqCS93Mpj9_7Vu0i9RUTomJU2n69bEug" 
 # ABAS (em minúsculo)
 ABA_VENDAS = "vendas"
@@ -33,7 +32,6 @@ def format_brl(value):
 def limpar_coluna_valor(df, coluna_original, coluna_limpa='Total Limpo'):
     """Limpa e converte a coluna de valor para numérico, removendo R$ e separadores."""
     if coluna_original not in df.columns:
-        # Erro crítico que será capturado no carregar_e_limpar_dados
         raise ValueError(f"A coluna de valor '{coluna_original}' está vazia!")
 
     df[coluna_limpa] = (
@@ -51,7 +49,6 @@ def limpar_coluna_valor(df, coluna_original, coluna_limpa='Total Limpo'):
 def processar_data(df, coluna_data_hora):
     """Converte e extrai componentes de data/hora (Assume formato %d/%m/%Y %H:%M:%S)."""
     if coluna_data_hora not in df.columns:
-        # Erro crítico que será capturado no carregar_e_limpar_dados
         raise ValueError(f"A coluna de data/hora '{coluna_data_hora}' está vazia!")
         
     df['Data/Hora'] = pd.to_datetime(df[coluna_data_hora], errors='coerce', format='%d/%m/%Y %H:%M:%S')
@@ -78,7 +75,7 @@ def carregar_e_limpar_dados():
     fuso_brasilia = pytz.timezone('America/Sao_Paulo')
     agora_brasilia = datetime.now(fuso_brasilia) # Obtém a data/hora AGORA no fuso de Brasília
     data_atual = agora_brasilia.date() # Apenas a data para o filtro diário
-
+    
     # Inicializa DataFrames de Gastos vazios
     df_gastos_mes = pd.DataFrame()
     df_gastos_dia = pd.DataFrame()
@@ -106,25 +103,19 @@ def carregar_e_limpar_dados():
             df_gastos = processar_data(df_gastos, COLUNA_DATA_HORA) 
             df_gastos_mes, df_gastos_dia = filtrar_por_mes_e_dia(df_gastos, data_atual)
         except ValueError as ve:
-             # Mensagem assertiva + Detalhe dinâmico do erro (governança).
              st.warning(f"⚠️ Sem dados de gasto para análise. Detalhe Técnico: {ve}")
-             # Garante que os DataFrames vazios sejam passados
              df_gastos_mes = pd.DataFrame()
              df_gastos_dia = pd.DataFrame()
         except Exception as e:
-             # Trata erros inesperados durante o carregamento dos Gastos (ex: problema de acesso à aba)
              st.warning(f"⚠️ Sem dados de gasto para análise. Erro de conexão/processamento da aba GASTOS: {e}")
              df_gastos_mes = pd.DataFrame()
              df_gastos_dia = pd.DataFrame()
 
 
     except ValueError as ve:
-        # Erro crítico de configuração (geralmente da aba VENDAS, conforme o raise acima)
         st.error(f"ERRO CRÍTICO DE CONFIGURAÇÃO: {ve}")
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
     except Exception as e:
-        # Erro de conexão/autenticação
-        # MANTEMOS A MENSAGEM CLARA PARA CASO DE ERROS DE PERMISSÃO/SECRET
         st.error(f"ERRO DE CONEXÃO/AUTENTICAÇÃO GERAL: Verifique o ID, abas e Secret. Detalhes: {e}")
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
@@ -135,16 +126,32 @@ def calcular_kpis_vendas(df_mes, df_dia):
     """Calcula KPIs essenciais de VENDAS para o painel clean, incluindo o Cliente."""
     kpis = {}
     
+    # 🚨 AJUSTE: CÁLCULO DA QUANTIDADE VENDIDA (ASSUMINDO VIRGULA COMO DELIMITADOR)
+    if not df_mes.empty and COLUNA_ITEM_VENDIDO in df_mes.columns:
+        
+        # O código vai quebrar a string por vírgula e contar o número de itens
+        # Ex: "Bolo A, Bolo B" -> Contagem Unidades = 2
+        df_mes['Contagem Unidades'] = df_mes[COLUNA_ITEM_VENDIDO].astype(str).str.split(',').apply(len)
+        df_dia['Contagem Unidades'] = df_dia[COLUNA_ITEM_VENDIDO].astype(str).str.split(',').apply(len)
+        
+        kpis['contagem_mes'] = df_mes['Contagem Unidades'].sum()
+        kpis['contagem_dia'] = df_dia['Contagem Unidades'].sum()
+        
+        # OBS: Se a contagem for 0 (coluna vazia ou erro de formatação), o cálculo total de unidades será 0.
+    else:
+        # Se a coluna SABORES não existir, voltamos a contar a linha (transação)
+        kpis['contagem_mes'] = df_mes.shape[0]
+        kpis['contagem_dia'] = df_dia.shape[0]
+
     # KPIs de Totais
     kpis['total_mes'] = df_mes['Total Limpo'].sum() if not df_mes.empty else 0.0
-    kpis['contagem_mes'] = df_mes.shape[0]
     kpis['total_dia'] = df_dia['Total Limpo'].sum() if not df_dia.empty else 0.0
-    kpis['contagem_dia'] = df_dia.shape[0]
 
     # --- INSIGHTS ---
 
-    # 1. Produto Campeão (Mês)
+    # 1. Produto Campeão (Mês) - Baseado em VENDAS (linhas) ou na nova contagem, se disponível
     if not df_mes.empty and COLUNA_ITEM_VENDIDO in df_mes.columns:
+        # Para Produto Campeão, usamos o item listado (o .mode() pega o mais frequente na coluna)
         try:
              kpis['item_campeao_mes'] = df_mes[COLUNA_ITEM_VENDIDO].mode().iloc[0] 
         except IndexError:
@@ -176,7 +183,7 @@ def calcular_kpis_gastos(df_mes, df_dia):
     """Calcula KPIs essenciais de GASTOS para o painel clean, incluindo a contagem."""
     kpis = {}
     
-    # KPIs do Mês e Dia (Contagem Adicionada)
+    # KPIs do Mês e Dia (Contagem Adicionada) - Gastos ainda contam LINHAS/TRANSAÇÕES
     kpis['total_mes'] = df_mes['Total Limpo'].sum() if not df_mes.empty else 0.0
     kpis['contagem_mes'] = df_mes.shape[0]
     kpis['total_dia'] = df_dia['Total Limpo'].sum() if not df_dia.empty else 0.0
@@ -184,9 +191,7 @@ def calcular_kpis_gastos(df_mes, df_dia):
 
     # Dados Adicionais (Insights)
     if not df_mes.empty and COLUNA_ITEM_GASTO in df_mes.columns:
-        # Item de Gasto Principal (usando a coluna PRODUTO da aba GASTOS)
         gasto_por_item = df_mes.groupby(COLUNA_ITEM_GASTO)['Total Limpo'].sum().sort_values(ascending=False)
-        # Assegura que não pegaremos de um GroupBy vazio
         kpis['item_principal_gasto_mes'] = gasto_por_item.index[0] if not gasto_por_item.empty else 'N/A'
         kpis['gasto_principal_valor'] = gasto_por_item.iloc[0] if not gasto_por_item.empty else 0.0
     else:
@@ -203,11 +208,10 @@ def montar_dashboard(kpis_vendas, kpis_gastos):
     agora_brasilia = datetime.now(fuso_brasilia)
     hora_atualizacao = agora_brasilia.strftime('%d/%m/%Y %H:%M:%S')
     mes_titulo = agora_brasilia.strftime('%B/%Y').upper()
-
+    
     # MUDANÇA: BOTÃO BEM VISÍVEL NO TOPO
-    # type="primary" o deixa azul (ou a cor primária do seu tema) e bem destacado
     if st.button("🔴 CLIQUE AQUI PARA ATUALIZAR DADOS AGORA (FORÇAR RECARGA)", type="primary"):
-        st.rerun() # Força a re-execução do script inteiro, buscando novos dados
+        st.rerun() 
     
     st.title(f"🎂 Painel de Confeitaria: Mês de {mes_titulo}")
     
@@ -253,7 +257,8 @@ def montar_dashboard(kpis_vendas, kpis_gastos):
     col1.metric(
         label="R$ VENDAS HOJE", 
         value=format_brl(kpis_vendas['total_dia']),
-        delta=f"{kpis_vendas['contagem_dia']} unds vendidas",
+        # AGORA É CONTAGEM DE UNIDADES!
+        delta=f"{kpis_vendas['contagem_dia']:.0f} unds vendidas",
         delta_color="off" 
     )
 
@@ -261,7 +266,8 @@ def montar_dashboard(kpis_vendas, kpis_gastos):
     col2.metric(
         label="R$ VENDAS MÊS", 
         value=format_brl(kpis_vendas['total_mes']), 
-        delta=f"{kpis_vendas['contagem_mes']} unds vendidas",
+        # AGORA É CONTAGEM DE UNIDADES!
+        delta=f"{kpis_vendas['contagem_mes']:.0f} unds vendidas",
         delta_color="off"
     )
     
