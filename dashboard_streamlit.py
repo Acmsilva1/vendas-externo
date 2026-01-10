@@ -1,9 +1,9 @@
 import pandas as pd
 import gspread
-from datetime import datetime, date, timedelta # Adicionado timedelta para o cálculo de ontem
+from datetime import datetime, date, timedelta
 import streamlit as st 
 import time 
-import pytz # Adicionado para controle de fuso horário
+import pytz 
 
 # --- CONFIGURAÇÕES FIXAS ---
 # ID da planilha fornecido pelo usuário
@@ -261,9 +261,10 @@ def montar_dashboard(kpis_vendas, kpis_gastos):
     diferenca_valor = kpis_vendas['total_dia'] - kpis_vendas['total_anterior']
     diferenca_unidades = kpis_vendas['contagem_dia'] - kpis_vendas['contagem_anterior']
     
-    # NOVO: Define as cores LITERAIS para evitar confusão no Streamlit
-    cor_valor = "green" if diferenca_valor >= 0 else "red"
-    cor_unidades = "green" if diferenca_unidades >= 0 else "red"
+    # CORREÇÃO: Usamos 'normal' e 'inverse'. 
+    # 'Normal' = (Geralmente) Verde para positivo/zero. 'Inverse' = (Geralmente) Vermelho para negativo.
+    cor_valor = "normal" if diferenca_valor >= 0 else "inverse"
+    cor_unidades = "normal" if diferenca_unidades >= 0 else "inverse"
     
     # Ajusta o layout para 6 colunas para incluir as DUAS comparações
     col1, col_comp_valor, col_comp_und, col2, col3, col4 = st.columns([1, 1, 1, 1, 1, 1]) 
@@ -281,7 +282,7 @@ def montar_dashboard(kpis_vendas, kpis_gastos):
         label="R$ DIF. (HOJE vs. ONTEM)",
         value=format_brl(diferenca_valor),
         delta=format_brl(diferenca_valor), 
-        delta_color=cor_valor, # COR FORÇADA
+        delta_color=cor_valor, # COR CORRIGIDA
         help=f"Comparação com o total de R$ {kpis_vendas['total_anterior']:,.2f} vendido ontem."
     )
 
@@ -290,7 +291,7 @@ def montar_dashboard(kpis_vendas, kpis_gastos):
         label="UNIDADES DIF. (HOJE vs. ONTEM)",
         value=f"{diferenca_unidades:.0f} unds",
         delta=f"{diferenca_unidades:.0f} unds",
-        delta_color=cor_unidades, # COR FORÇADA
+        delta_color=cor_unidades, # COR CORRIGIDA
         help=f"Variação no número de itens vendidos. Ontem: {kpis_vendas['contagem_anterior']:.0f} unds."
     )
     
