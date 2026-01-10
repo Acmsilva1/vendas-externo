@@ -1,9 +1,9 @@
 import pandas as pd
 import gspread
-from datetime import datetime, date, timedelta # Adicionado timedelta e pytz
+from datetime import datetime, date, timedelta # Reintroduzido para o 'Hoje vs. Ontem'
 import streamlit as st 
 import time 
-import pytz 
+import pytz # Reintroduzido para o fuso horário
 
 # --- CONFIGURAÇÕES FIXAS ---
 # ID da planilha fornecido pelo usuário
@@ -118,9 +118,11 @@ def carregar_e_limpar_dados():
 
     except ValueError as ve:
         st.error(f"ERRO CRÍTICO DE CONFIGURAÇÃO: {ve}")
+        # Retorna 5 DataFrames vazios (df_vendas_anterior incluso)
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
     except Exception as e:
         st.error(f"ERRO DE CONEXÃO/AUTENTICAÇÃO GERAL: Verifique o ID, abas e Secret. Detalhes: {e}")
+        # Retorna 5 DataFrames vazios (df_vendas_anterior incluso)
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
 
@@ -233,7 +235,7 @@ def montar_dashboard(kpis_vendas, kpis_gastos):
     total_gastos_mes = kpis_gastos['total_mes']
     resultado_liquido = total_vendas_mes - total_gastos_mes
     
-    # Lucro é bom (normal/verde), Prejuízo é ruim (inverse/vermelho) - Lógica padrão Streamlit
+    # Lucro é bom ('normal' no Streamlit), Prejuízo é ruim ('inverse' no Streamlit)
     cor_resultado = "normal" if resultado_liquido >= 0 else "inverse" 
 
     col_res_a, col_res_b = st.columns([2, 1])
@@ -262,29 +264,11 @@ def montar_dashboard(kpis_vendas, kpis_gastos):
     diferenca_valor = kpis_vendas['total_dia'] - kpis_vendas['total_anterior']
     diferenca_unidades = kpis_vendas['contagem_dia'] - kpis_vendas['contagem_anterior']
     
-    # CORREÇÃO FINAL: MANIPULANDO DELTA E COR PARA O MUNDO INVERTIDO
-    
-    # R$ DIF. (VALOR)
-    if diferenca_valor >= 0:
-        # Positivo: Queremos Verde (Cor Inversa no seu tema) e Seta para Cima (Delta positivo)
-        delta_valor_formatado = format_brl(diferenca_valor)
-        cor_valor = "inverse"
-    else:
-        # Negativo: Queremos Vermelho (Cor Normal no seu tema) e Seta para Baixo (Delta negativo)
-        # Manter o delta negativo no Streamlit com delta_color="normal" fará a seta ir para baixo e a cor ser Vermelha no seu tema.
-        delta_valor_formatado = format_brl(diferenca_valor)
-        cor_valor = "normal" 
-    
-    # UNIDADES DIF. (QUANTIDADE)
-    if diferenca_unidades >= 0:
-        # Positivo: Queremos Verde e Seta para Cima.
-        delta_unidades_formatado = f"{diferenca_unidades:.0f} unds"
-        cor_unidades = "inverse" # Inverso no seu tema
-    else:
-        # Negativo: Queremos Vermelho e Seta para Baixo.
-        delta_unidades_formatado = f"{diferenca_unidades:.0f} unds"
-        cor_unidades = "normal" # Normal no seu tema
-
+    # CORREÇÃO FINAL E DEFINITIVA: Usando a lógica PADRÃO do Streamlit.
+    # Positivo (Ganho) é 'normal'; Negativo (Perda) é 'inverse'.
+    # Isso deve resolver os bugs de cor e seta.
+    cor_valor = "normal" if diferenca_valor >= 0 else "inverse" 
+    cor_unidades = "normal" if diferenca_unidades >= 0 else "inverse" 
     
     # Ajusta o layout para 6 colunas para incluir as DUAS comparações
     col1, col_comp_valor, col_comp_und, col2, col3, col4 = st.columns([1, 1, 1, 1, 1, 1]) 
@@ -298,20 +282,24 @@ def montar_dashboard(kpis_vendas, kpis_gastos):
     )
     
     # 1. Métrica de Comparação de VALOR (HOJE vs. ONTEM)
+    delta_valor_formatado = format_brl(diferenca_valor) # Mantém a formatação BRL
+
     col_comp_valor.metric(
         label="R$ DIF. (HOJE vs. ONTEM)",
         value=format_brl(diferenca_valor),
         delta=delta_valor_formatado, 
-        delta_color=cor_valor, # COR CORRIGIDA COM LÓGICA INVERSA DE CORES
+        delta_color=cor_valor, # CORREÇÃO APLICADA
         help=f"Comparação com o total de R$ {kpis_vendas['total_anterior']:,.2f} vendido ontem."
     )
 
     # 2. Métrica de Comparação de QUANTIDADE (HOJE vs. ONTEM)
+    delta_unidades_formatado = f"{diferenca_unidades:.0f} unds"
+
     col_comp_und.metric(
         label="UNIDADES DIF. (HOJE vs. ONTEM)",
         value=f"{diferenca_unidades:.0f} unds",
         delta=delta_unidades_formatado,
-        delta_color=cor_unidades, # COR CORRIGIDA COM LÓGICA INVERSA DE CORES
+        delta_color=cor_unidades, # CORREÇÃO APLICADA
         help=f"Variação no número de itens vendidos. Ontem: {kpis_vendas['contagem_anterior']:.0f} unds."
     )
     
