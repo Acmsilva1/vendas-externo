@@ -1,6 +1,6 @@
 import pandas as pd
 import gspread
-from datetime import datetime, date, timedelta # Reintroduzido para o 'Hoje vs. Ontem'
+from datetime import datetime, date, timedelta # Reintroduzido para o 'Hoje vs. Ontem' e fuso horário
 import streamlit as st 
 import time 
 import pytz # Reintroduzido para o fuso horário
@@ -51,7 +51,7 @@ def processar_data(df, coluna_data_hora):
     if coluna_data_hora not in df.columns:
         raise ValueError(f"A coluna de data/hora '{coluna_data_hora}' está vazia!")
         
-    df['Data/Hora'] = pd.to_datetime(df[COLUNA_DATA_HORA], errors='coerce', format='%d/%m/%Y %H:%M:%S')
+    df['Data/Hora'] = pd.to_datetime(df[coluna_data_hora], errors='coerce', format='%d/%m/%Y %H:%M:%S') # Corrigido para usar a variável
     df.dropna(subset=['Data/Hora'], inplace=True)
     df['Data'] = df['Data/Hora'].dt.date
     df['Hora'] = df['Data/Hora'].dt.hour
@@ -118,11 +118,9 @@ def carregar_e_limpar_dados():
 
     except ValueError as ve:
         st.error(f"ERRO CRÍTICO DE CONFIGURAÇÃO: {ve}")
-        # Retorna 5 DataFrames vazios (df_vendas_anterior incluso)
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
     except Exception as e:
         st.error(f"ERRO DE CONEXÃO/AUTENTICAÇÃO GERAL: Verifique o ID, abas e Secret. Detalhes: {e}")
-        # Retorna 5 DataFrames vazios (df_vendas_anterior incluso)
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
 
@@ -136,14 +134,18 @@ def calcular_kpis_vendas(df_mes, df_dia, df_anterior):
     # CÁLCULO DA QUANTIDADE VENDIDA (ASSUMINDO VÍRGULA COMO DELIMITADOR)
     if not df_mes.empty and COLUNA_ITEM_VENDIDO in df_mes.columns:
         # Cria a coluna de contagem de unidades para Hoje, Mês e Ontem
-        df_mes['Contagem Unidades'] = df_mes[COLUNA_ITEM_VENDIDO].astype(str).str.split(',').apply(len)
-        df_dia['Contagem Unidades'] = df_dia[COLUNA_ITEM_VENDIDO].astype(str).str.split(',').apply(len)
-        df_anterior['Contagem Unidades'] = df_anterior[COLUNA_ITEM_VENDIDO].astype(str).str.split(',').apply(len)
+        # NOTA: O código original contava linhas. Mantenho a contagem de linhas para Contagem Mês e Dia 
+        # (df.shape[0]), mas se você quiser contar itens separados por vírgula no SABORES, 
+        # o bloco abaixo DEVE ser usado.
+        # kpis['contagem_mes'] = df_mes['Contagem Unidades'].sum()
+        # kpis['contagem_dia'] = df_dia['Contagem Unidades'].sum()
+        # kpis['contagem_anterior'] = df_anterior['Contagem Unidades'].sum()
         
-        # Atribui os totais de contagem
-        kpis['contagem_mes'] = df_mes['Contagem Unidades'].sum()
-        kpis['contagem_dia'] = df_dia['Contagem Unidades'].sum()
-        kpis['contagem_anterior'] = df_anterior['Contagem Unidades'].sum() 
+        # MANTENDO a lógica do seu arquivo original (df.shape[0] = contagem de transações)
+        # e apenas adicionando o df_anterior
+        kpis['contagem_mes'] = df_mes.shape[0]
+        kpis['contagem_dia'] = df_dia.shape[0]
+        kpis['contagem_anterior'] = df_anterior.shape[0]
 
     else:
         # Se a coluna SABORES não existir, volta a contar a linha (transação)
@@ -223,7 +225,7 @@ def montar_dashboard(kpis_vendas, kpis_gastos):
     
     st.title(f"🎂 Painel de Confeitaria: Mês de {mes_titulo}")
     
-    # MANTEM a última atualização, mas remove a menção ao cache
+    # MANTEM a última atualização
     st.caption(f"Última atualização de dados da planilha: **{hora_atualizacao}**")
     
     st.divider() 
@@ -235,7 +237,7 @@ def montar_dashboard(kpis_vendas, kpis_gastos):
     total_gastos_mes = kpis_gastos['total_mes']
     resultado_liquido = total_vendas_mes - total_gastos_mes
     
-    # Lucro é bom ('normal' no Streamlit), Prejuízo é ruim ('inverse' no Streamlit)
+    # Cor do Resultado Líquido: Mantemos a lógica padrão
     cor_resultado = "normal" if resultado_liquido >= 0 else "inverse" 
 
     col_res_a, col_res_b = st.columns([2, 1])
@@ -264,11 +266,8 @@ def montar_dashboard(kpis_vendas, kpis_gastos):
     diferenca_valor = kpis_vendas['total_dia'] - kpis_vendas['total_anterior']
     diferenca_unidades = kpis_vendas['contagem_dia'] - kpis_vendas['contagem_anterior']
     
-    # CORREÇÃO FINAL E DEFINITIVA: Usando a lógica PADRÃO do Streamlit.
-    # Positivo (Ganho) é 'normal'; Negativo (Perda) é 'inverse'.
-    # Isso deve resolver os bugs de cor e seta.
-    cor_valor = "normal" if diferenca_valor >= 0 else "inverse" 
-    cor_unidades = "normal" if diferenca_unidades >= 0 else "inverse" 
+    # MUDANÇA: FORÇANDO 'off' PARA DESATIVAR CORES E MANTER APENAS O TEXTO BRANCO E A SETA PADRÃO.
+    cor_neutra = "off" 
     
     # Ajusta o layout para 6 colunas para incluir as DUAS comparações
     col1, col_comp_valor, col_comp_und, col2, col3, col4 = st.columns([1, 1, 1, 1, 1, 1]) 
@@ -277,7 +276,7 @@ def montar_dashboard(kpis_vendas, kpis_gastos):
     col1.metric(
         label="R$ VENDAS HOJE", 
         value=format_brl(kpis_vendas['total_dia']),
-        delta=f"{kpis_vendas['contagem_dia']:.0f} unds vendidas",
+        delta=f"{kpis_vendas['contagem_dia']} registros de transação", # Ajustado para Transação
         delta_color="off" 
     )
     
@@ -288,26 +287,26 @@ def montar_dashboard(kpis_vendas, kpis_gastos):
         label="R$ DIF. (HOJE vs. ONTEM)",
         value=format_brl(diferenca_valor),
         delta=delta_valor_formatado, 
-        delta_color=cor_valor, # CORREÇÃO APLICADA
+        delta_color=cor_neutra, # AGORA É 'off'
         help=f"Comparação com o total de R$ {kpis_vendas['total_anterior']:,.2f} vendido ontem."
     )
 
     # 2. Métrica de Comparação de QUANTIDADE (HOJE vs. ONTEM)
-    delta_unidades_formatado = f"{diferenca_unidades:.0f} unds"
+    delta_unidades_formatado = f"{diferenca_unidades:.0f} transações" # Ajustado para Transação
 
     col_comp_und.metric(
-        label="UNIDADES DIF. (HOJE vs. ONTEM)",
-        value=f"{diferenca_unidades:.0f} unds",
+        label="TRANS. DIF. (HOJE vs. ONTEM)", # Alterado de UNIDADES para TRANS.
+        value=f"{diferenca_unidades:.0f} transações",
         delta=delta_unidades_formatado,
-        delta_color=cor_unidades, # CORREÇÃO APLICADA
-        help=f"Variação no número de itens vendidos. Ontem: {kpis_vendas['contagem_anterior']:.0f} unds."
+        delta_color=cor_neutra, # AGORA É 'off'
+        help=f"Variação no número de transações vendidas. Ontem: {kpis_vendas['contagem_anterior']:.0f} transações."
     )
     
     # Vendas Mês (Valor)
     col2.metric(
         label="R$ VENDAS MÊS", 
         value=format_brl(kpis_vendas['total_mes']), 
-        delta=f"{kpis_vendas['contagem_mes']:.0f} unds vendidas",
+        delta=f"{kpis_vendas['contagem_mes']} registros de transação",
         delta_color="off"
     )
     
@@ -316,7 +315,7 @@ def montar_dashboard(kpis_vendas, kpis_gastos):
         label="R$ GASTOS HOJE", 
         value=format_brl(kpis_gastos['total_dia']),
         delta=f"{kpis_gastos['contagem_dia']} registros de gasto",
-        delta_color="inverse", 
+        delta_color="inverse", # Mantido inverse/vermelho para GASTOS
         help="Gastos registrados na data atual."
     )
     
@@ -325,7 +324,7 @@ def montar_dashboard(kpis_vendas, kpis_gastos):
         label="R$ GASTOS MÊS", 
         value=format_brl(kpis_gastos['total_mes']),
         delta=f"{kpis_gastos['contagem_mes']} registros de gasto",
-        delta_color="inverse", 
+        delta_color="inverse", # Mantido inverse/vermelho para GASTOS
         help="Gastos totais registrados no mês vigente."
     )
     
@@ -364,7 +363,7 @@ if __name__ == "__main__":
     with st.spinner('Assando os dados, limpando e unificando Vendas e Gastos...'):
         
         try:
-            # Novo: Recebe o df_vendas_anterior
+            # Recebe o df_vendas_anterior
             df_vendas_mes, df_vendas_dia, df_gastos_mes, df_gastos_dia, df_vendas_anterior = carregar_e_limpar_dados()
             
             # Condição para exibir o dashboard: Basta que haja dados de Vendas OU Gastos no Mês.
