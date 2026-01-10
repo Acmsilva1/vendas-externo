@@ -3,11 +3,12 @@ import gspread
 from datetime import datetime, date
 import streamlit as st 
 import time 
-import pytz # NOVO: Importamos o pytz
+import pytz # Importado para o fuso horário
 
 # --- CONFIGURAÇÕES FIXAS ---
 # ID da planilha fornecido pelo usuário
-SPREADSHEET_ID_UNIFICADO = "1LuqYrfR8ry_MqCS93Qpj9_7Vu0i9RUTomJU2n69bEug" 
+# CORRIGIDO: Retornando ao ID original que estava funcionando!
+SPREADSHEET_ID_UNIFICADO = "1LuqYrfR8ry_MqCS93Mpj9_7Vu0i9RUTomJU2n69bEug" 
 # ABAS (em minúsculo)
 ABA_VENDAS = "vendas"
 ABA_GASTOS = "gastos"
@@ -123,6 +124,7 @@ def carregar_e_limpar_dados():
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
     except Exception as e:
         # Erro de conexão/autenticação
+        # MANTEMOS A MENSAGEM CLARA PARA CASO DE ERROS DE PERMISSÃO/SECRET
         st.error(f"ERRO DE CONEXÃO/AUTENTICAÇÃO GERAL: Verifique o ID, abas e Secret. Detalhes: {e}")
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
