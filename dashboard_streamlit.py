@@ -1,6 +1,6 @@
 import pandas as pd
 import gspread
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta # Adicionado timedelta e pytz
 import streamlit as st 
 import time 
 import pytz 
@@ -51,7 +51,7 @@ def processar_data(df, coluna_data_hora):
     if coluna_data_hora not in df.columns:
         raise ValueError(f"A coluna de data/hora '{coluna_data_hora}' está vazia!")
         
-    df['Data/Hora'] = pd.to_datetime(df[coluna_data_hora], errors='coerce', format='%d/%m/%Y %H:%M:%S')
+    df['Data/Hora'] = pd.to_datetime(df[COLUNA_DATA_HORA], errors='coerce', format='%d/%m/%Y %H:%M:%S')
     df.dropna(subset=['Data/Hora'], inplace=True)
     df['Data'] = df['Data/Hora'].dt.date
     df['Hora'] = df['Data/Hora'].dt.hour
@@ -118,11 +118,9 @@ def carregar_e_limpar_dados():
 
     except ValueError as ve:
         st.error(f"ERRO CRÍTICO DE CONFIGURAÇÃO: {ve}")
-        # Retorna 5 DataFrames vazios (df_vendas_anterior incluso)
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
     except Exception as e:
         st.error(f"ERRO DE CONEXÃO/AUTENTICAÇÃO GERAL: Verifique o ID, abas e Secret. Detalhes: {e}")
-        # Retorna 5 DataFrames vazios (df_vendas_anterior incluso)
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
 
@@ -136,7 +134,6 @@ def calcular_kpis_vendas(df_mes, df_dia, df_anterior):
     # CÁLCULO DA QUANTIDADE VENDIDA (ASSUMINDO VÍRGULA COMO DELIMITADOR)
     if not df_mes.empty and COLUNA_ITEM_VENDIDO in df_mes.columns:
         # Cria a coluna de contagem de unidades para Hoje, Mês e Ontem
-        # Conta quantos itens há na lista separada por vírgula (ex: 'Bolo de Chocolate, Bolo de Cenoura' = 2)
         df_mes['Contagem Unidades'] = df_mes[COLUNA_ITEM_VENDIDO].astype(str).str.split(',').apply(len)
         df_dia['Contagem Unidades'] = df_dia[COLUNA_ITEM_VENDIDO].astype(str).str.split(',').apply(len)
         df_anterior['Contagem Unidades'] = df_anterior[COLUNA_ITEM_VENDIDO].astype(str).str.split(',').apply(len)
@@ -236,7 +233,7 @@ def montar_dashboard(kpis_vendas, kpis_gastos):
     total_gastos_mes = kpis_gastos['total_mes']
     resultado_liquido = total_vendas_mes - total_gastos_mes
     
-    # Lucro é bom (normal/verde), Prejuízo é ruim (inverse/vermelho)
+    # Lucro é bom (normal/verde), Prejuízo é ruim (inverse/vermelho) - Lógica padrão Streamlit
     cor_resultado = "normal" if resultado_liquido >= 0 else "inverse" 
 
     col_res_a, col_res_b = st.columns([2, 1])
@@ -265,12 +262,29 @@ def montar_dashboard(kpis_vendas, kpis_gastos):
     diferenca_valor = kpis_vendas['total_dia'] - kpis_vendas['total_anterior']
     diferenca_unidades = kpis_vendas['contagem_dia'] - kpis_vendas['contagem_anterior']
     
-    # CORREÇÃO CRÍTICA: Se o Streamlit inverteu o 'normal'/'inverse' no tema escuro:
-    # 1. Se valor >= 0 (Positivo/Bom), forçamos o 'inverse' para que ele use a cor de "bom" (Verde).
-    # 2. Se valor < 0 (Negativo/Ruim), forçamos o 'normal' para que ele use a cor de "ruim" (Vermelho).
-    # (No seu tema, o Streamlit inverteu, mas a intenção é: positivo=verde, negativo=vermelho)
-    cor_valor = "inverse" if diferenca_valor >= 0 else "normal" # Lógica Invertida para tema escuro
-    cor_unidades = "inverse" if diferenca_unidades >= 0 else "normal" # Lógica Invertida para tema escuro
+    # CORREÇÃO FINAL: MANIPULANDO DELTA E COR PARA O MUNDO INVERTIDO
+    
+    # R$ DIF. (VALOR)
+    if diferenca_valor >= 0:
+        # Positivo: Queremos Verde (Cor Inversa no seu tema) e Seta para Cima (Delta positivo)
+        delta_valor_formatado = format_brl(diferenca_valor)
+        cor_valor = "inverse"
+    else:
+        # Negativo: Queremos Vermelho (Cor Normal no seu tema) e Seta para Baixo (Delta negativo)
+        # Manter o delta negativo no Streamlit com delta_color="normal" fará a seta ir para baixo e a cor ser Vermelha no seu tema.
+        delta_valor_formatado = format_brl(diferenca_valor)
+        cor_valor = "normal" 
+    
+    # UNIDADES DIF. (QUANTIDADE)
+    if diferenca_unidades >= 0:
+        # Positivo: Queremos Verde e Seta para Cima.
+        delta_unidades_formatado = f"{diferenca_unidades:.0f} unds"
+        cor_unidades = "inverse" # Inverso no seu tema
+    else:
+        # Negativo: Queremos Vermelho e Seta para Baixo.
+        delta_unidades_formatado = f"{diferenca_unidades:.0f} unds"
+        cor_unidades = "normal" # Normal no seu tema
+
     
     # Ajusta o layout para 6 colunas para incluir as DUAS comparações
     col1, col_comp_valor, col_comp_und, col2, col3, col4 = st.columns([1, 1, 1, 1, 1, 1]) 
@@ -287,8 +301,8 @@ def montar_dashboard(kpis_vendas, kpis_gastos):
     col_comp_valor.metric(
         label="R$ DIF. (HOJE vs. ONTEM)",
         value=format_brl(diferenca_valor),
-        delta=format_brl(diferenca_valor), 
-        delta_color=cor_valor, # COR CORRIGIDA COM LÓGICA INVERSA
+        delta=delta_valor_formatado, 
+        delta_color=cor_valor, # COR CORRIGIDA COM LÓGICA INVERSA DE CORES
         help=f"Comparação com o total de R$ {kpis_vendas['total_anterior']:,.2f} vendido ontem."
     )
 
@@ -296,8 +310,8 @@ def montar_dashboard(kpis_vendas, kpis_gastos):
     col_comp_und.metric(
         label="UNIDADES DIF. (HOJE vs. ONTEM)",
         value=f"{diferenca_unidades:.0f} unds",
-        delta=f"{diferenca_unidades:.0f} unds",
-        delta_color=cor_unidades, # COR CORRIGIDA COM LÓGICA INVERSA
+        delta=delta_unidades_formatado,
+        delta_color=cor_unidades, # COR CORRIGIDA COM LÓGICA INVERSA DE CORES
         help=f"Variação no número de itens vendidos. Ontem: {kpis_vendas['contagem_anterior']:.0f} unds."
     )
     
