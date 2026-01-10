@@ -1,9 +1,9 @@
 import pandas as pd
 import gspread
-from datetime import datetime, date
+from datetime import datetime, date, timedelta # NOVO: Importamos timedelta
 import streamlit as st 
 import time 
-import pytz # RE-ADICIONADO: Para controle de fuso horário
+import pytz 
 
 # --- CONFIGURAÇÕES FIXAS ---
 # ID da planilha fornecido pelo usuário
@@ -14,11 +14,11 @@ ABA_GASTOS = "gastos"
 
 # NOME DAS COLUNAS ESSENCIAIS NA SUA PLANILHA (CALIBRADO AGORA!)
 # ABA VENDAS
-COLUNA_ITEM_VENDIDO = 'SABORES'          # Item vendido (para Produto Campeão)
-COLUNA_CLIENTE = 'DADOS DO COMPRADOR'    # Cliente (para Melhor Cliente)
+COLUNA_ITEM_VENDIDO = 'SABORES'          
+COLUNA_CLIENTE = 'DADOS DO COMPRADOR'    
 COLUNA_VALOR_VENDA = 'VALOR DA VENDA'
 # ABA GASTOS
-COLUNA_ITEM_GASTO = 'PRODUTO'            # Item de Gasto (para Maior Gasto)
+COLUNA_ITEM_GASTO = 'PRODUTO'            
 COLUNA_VALOR_GASTO = 'VALOR'
 # COMUM
 COLUNA_DATA_HORA = 'DATA E HORA'
@@ -57,28 +57,30 @@ def processar_data(df, coluna_data_hora):
     df['Hora'] = df['Data/Hora'].dt.hour
     return df
 
-def filtrar_por_mes_e_dia(df, data_atual: date):
-    """Filtra o DataFrame estritamente para o mês e dia atual."""
-    mes_atual = data_atual.month
-    ano_atual = data_atual.year
+def filtrar_por_mes_e_dia(df, data_foco: date):
+    """Filtra o DataFrame estritamente para o mês e dia de foco."""
+    mes_foco = data_foco.month
+    ano_foco = data_foco.year
     
-    df_mes = df[(df['Data/Hora'].dt.month == mes_atual) & (df['Data/Hora'].dt.year == ano_atual)].copy()
-    df_dia = df[df['Data'] == data_atual].copy()
+    df_mes = df[(df['Data/Hora'].dt.month == mes_foco) & (df['Data/Hora'].dt.year == ano_foco)].copy()
+    df_dia = df[df['Data'] == data_foco].copy()
     
     return df_mes, df_dia
 
-# MUDANÇA: REMOÇÃO TOTAL DO CACHE (@st.cache_data) E ADIÇÃO DO FUSO
+# MUDANÇA: ADIÇÃO DO FUSO E DA DATA ANTERIOR
 def carregar_e_limpar_dados():
     st.set_page_config(layout="wide", page_title="💰 Controle de vendas diário")
     
-    # AJUSTE CRÍTICO: Definindo o FUSO HORÁRIO de São Paulo (Brasília)
+    # AJUSTE: Definindo o FUSO HORÁRIO de São Paulo (Brasília)
     fuso_brasilia = pytz.timezone('America/Sao_Paulo')
-    agora_brasilia = datetime.now(fuso_brasilia) # Obtém a data/hora AGORA no fuso de Brasília
-    data_atual = agora_brasilia.date() # Apenas a data para o filtro diário
+    agora_brasilia = datetime.now(fuso_brasilia) 
+    data_atual = agora_brasilia.date()
+    data_anterior = data_atual - timedelta(days=1) # NOVO: Data do dia anterior
     
     # Inicializa DataFrames de Gastos vazios
     df_gastos_mes = pd.DataFrame()
     df_gastos_dia = pd.DataFrame()
+    df_vendas_anterior = pd.DataFrame() # NOVO: Inicializa o df de ontem
 
     try:
         # 1. AUTENTICAÇÃO
@@ -90,9 +92,13 @@ def carregar_e_limpar_dados():
             df_vendas = pd.DataFrame(sh.worksheet(ABA_VENDAS).get_all_records())
             df_vendas = limpar_coluna_valor(df_vendas, COLUNA_VALOR_VENDA) 
             df_vendas = processar_data(df_vendas, COLUNA_DATA_HORA)
+            
+            # FILTROS DE DATAS
             df_vendas_mes, df_vendas_dia = filtrar_por_mes_e_dia(df_vendas, data_atual)
+            # NOVO: Filtro para o dia anterior
+            df_vendas_anterior = df_vendas[df_vendas['Data'] == data_anterior].copy() 
+
         except ValueError as ve:
-            # Se VENDAS falhar por coluna, disparamos um erro principal
             raise ValueError(f"Erro CRÍTICO na aba VENDAS: {ve}")
 
 
@@ -114,44 +120,40 @@ def carregar_e_limpar_dados():
 
     except ValueError as ve:
         st.error(f"ERRO CRÍTICO DE CONFIGURAÇÃO: {ve}")
-        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
     except Exception as e:
         st.error(f"ERRO DE CONEXÃO/AUTENTICAÇÃO GERAL: Verifique o ID, abas e Secret. Detalhes: {e}")
-        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
 
-    return df_vendas_mes, df_vendas_dia, df_gastos_mes, df_gastos_dia
+    return df_vendas_mes, df_vendas_dia, df_gastos_mes, df_gastos_dia, df_vendas_anterior # NOVO: df_vendas_anterior
 
-def calcular_kpis_vendas(df_mes, df_dia):
-    """Calcula KPIs essenciais de VENDAS para o painel clean, incluindo o Cliente."""
+# NOVO: A função agora recebe o DataFrame do dia anterior
+def calcular_kpis_vendas(df_mes, df_dia, df_anterior):
+    """Calcula KPIs essenciais de VENDAS para o painel clean, incluindo o Cliente e o Dia Anterior."""
     kpis = {}
     
-    # 🚨 AJUSTE: CÁLCULO DA QUANTIDADE VENDIDA (ASSUMINDO VIRGULA COMO DELIMITADOR)
+    # CÁLCULO DA QUANTIDADE VENDIDA (ASSUMINDO VÍRGULA COMO DELIMITADOR)
     if not df_mes.empty and COLUNA_ITEM_VENDIDO in df_mes.columns:
-        
-        # O código vai quebrar a string por vírgula e contar o número de itens
-        # Ex: "Bolo A, Bolo B" -> Contagem Unidades = 2
         df_mes['Contagem Unidades'] = df_mes[COLUNA_ITEM_VENDIDO].astype(str).str.split(',').apply(len)
         df_dia['Contagem Unidades'] = df_dia[COLUNA_ITEM_VENDIDO].astype(str).str.split(',').apply(len)
+        df_anterior['Contagem Unidades'] = df_anterior[COLUNA_ITEM_VENDIDO].astype(str).str.split(',').apply(len) # NOVO: Contagem de ontem
         
         kpis['contagem_mes'] = df_mes['Contagem Unidades'].sum()
         kpis['contagem_dia'] = df_dia['Contagem Unidades'].sum()
-        
-        # OBS: Se a contagem for 0 (coluna vazia ou erro de formatação), o cálculo total de unidades será 0.
     else:
-        # Se a coluna SABORES não existir, voltamos a contar a linha (transação)
         kpis['contagem_mes'] = df_mes.shape[0]
         kpis['contagem_dia'] = df_dia.shape[0]
 
     # KPIs de Totais
     kpis['total_mes'] = df_mes['Total Limpo'].sum() if not df_mes.empty else 0.0
     kpis['total_dia'] = df_dia['Total Limpo'].sum() if not df_dia.empty else 0.0
+    kpis['total_anterior'] = df_anterior['Total Limpo'].sum() if not df_anterior.empty else 0.0 # NOVO: KPI de ontem
+    
+    # ... (Restante dos INSIGHTS)
 
-    # --- INSIGHTS ---
-
-    # 1. Produto Campeão (Mês) - Baseado em VENDAS (linhas) ou na nova contagem, se disponível
+    # 1. Produto Campeão (Mês)
     if not df_mes.empty and COLUNA_ITEM_VENDIDO in df_mes.columns:
-        # Para Produto Campeão, usamos o item listado (o .mode() pega o mais frequente na coluna)
         try:
              kpis['item_campeao_mes'] = df_mes[COLUNA_ITEM_VENDIDO].mode().iloc[0] 
         except IndexError:
@@ -251,13 +253,25 @@ def montar_dashboard(kpis_vendas, kpis_gastos):
     # --- 2. KPIS DE VENDAS E GASTOS (LINHA PRINCIPAL) ---
     st.header("💰 Vendas x Despesas (Valores e Quantidades)")
     
-    col1, col2, col3, col4 = st.columns(4) 
+    # NOVO: Cálculo e display da comparação
+    diferenca_dia_anterior = kpis_vendas['total_dia'] - kpis_vendas['total_anterior']
+    
+    # Ajusta o layout para 5 colunas para incluir a comparação
+    col1, col_comp, col2, col3, col4 = st.columns([1, 1, 1, 1, 1]) 
+    
+    # Métrica de Comparação (HOJE vs. ONTEM)
+    col_comp.metric(
+        label="R$ DIF. (HOJE vs. ONTEM)",
+        value=format_brl(diferenca_dia_anterior),
+        delta=format_brl(diferenca_dia_anterior), # Delta mostra a mesma diferença com cor
+        delta_color="normal" if diferenca_dia_anterior >= 0 else "inverse",
+        help=f"Comparação com o total de R$ {kpis_vendas['total_anterior']:,.2f} vendido no dia anterior."
+    )
     
     # Vendas Hoje (Valor)
     col1.metric(
         label="R$ VENDAS HOJE", 
         value=format_brl(kpis_vendas['total_dia']),
-        # AGORA É CONTAGEM DE UNIDADES!
         delta=f"{kpis_vendas['contagem_dia']:.0f} unds vendidas",
         delta_color="off" 
     )
@@ -266,7 +280,6 @@ def montar_dashboard(kpis_vendas, kpis_gastos):
     col2.metric(
         label="R$ VENDAS MÊS", 
         value=format_brl(kpis_vendas['total_mes']), 
-        # AGORA É CONTAGEM DE UNIDADES!
         delta=f"{kpis_vendas['contagem_mes']:.0f} unds vendidas",
         delta_color="off"
     )
@@ -324,13 +337,14 @@ if __name__ == "__main__":
     with st.spinner('Assando os dados, limpando e unificando Vendas e Gastos...'):
         
         try:
-            df_vendas_mes, df_vendas_dia, df_gastos_mes, df_gastos_dia = carregar_e_limpar_dados()
+            # NOVO: Recebe o df_vendas_anterior
+            df_vendas_mes, df_vendas_dia, df_gastos_mes, df_gastos_dia, df_vendas_anterior = carregar_e_limpar_dados()
             
             # Condição para exibir o dashboard: Basta que haja dados de Vendas OU Gastos no Mês.
             if not df_vendas_mes.empty or not df_gastos_mes.empty:
                 
-                # 1. Calcula os KPIs
-                kpis_vendas = calcular_kpis_vendas(df_vendas_mes, df_vendas_dia)
+                # 1. Calcula os KPIs (Envia o df_vendas_anterior)
+                kpis_vendas = calcular_kpis_vendas(df_vendas_mes, df_vendas_dia, df_vendas_anterior)
                 kpis_gastos = calcular_kpis_gastos(df_gastos_mes, df_gastos_dia)
                 
                 # 2. Monta o Dashboard
