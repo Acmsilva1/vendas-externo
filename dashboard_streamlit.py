@@ -118,9 +118,11 @@ def carregar_e_limpar_dados():
 
     except ValueError as ve:
         st.error(f"ERRO CRÍTICO DE CONFIGURAÇÃO: {ve}")
+        # Retorna 5 DataFrames vazios (df_vendas_anterior incluso)
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
     except Exception as e:
         st.error(f"ERRO DE CONEXÃO/AUTENTICAÇÃO GERAL: Verifique o ID, abas e Secret. Detalhes: {e}")
+        # Retorna 5 DataFrames vazios (df_vendas_anterior incluso)
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
 
@@ -134,6 +136,7 @@ def calcular_kpis_vendas(df_mes, df_dia, df_anterior):
     # CÁLCULO DA QUANTIDADE VENDIDA (ASSUMINDO VÍRGULA COMO DELIMITADOR)
     if not df_mes.empty and COLUNA_ITEM_VENDIDO in df_mes.columns:
         # Cria a coluna de contagem de unidades para Hoje, Mês e Ontem
+        # Conta quantos itens há na lista separada por vírgula (ex: 'Bolo de Chocolate, Bolo de Cenoura' = 2)
         df_mes['Contagem Unidades'] = df_mes[COLUNA_ITEM_VENDIDO].astype(str).str.split(',').apply(len)
         df_dia['Contagem Unidades'] = df_dia[COLUNA_ITEM_VENDIDO].astype(str).str.split(',').apply(len)
         df_anterior['Contagem Unidades'] = df_anterior[COLUNA_ITEM_VENDIDO].astype(str).str.split(',').apply(len)
@@ -233,6 +236,7 @@ def montar_dashboard(kpis_vendas, kpis_gastos):
     total_gastos_mes = kpis_gastos['total_mes']
     resultado_liquido = total_vendas_mes - total_gastos_mes
     
+    # Lucro é bom (normal/verde), Prejuízo é ruim (inverse/vermelho)
     cor_resultado = "normal" if resultado_liquido >= 0 else "inverse" 
 
     col_res_a, col_res_b = st.columns([2, 1])
@@ -261,10 +265,12 @@ def montar_dashboard(kpis_vendas, kpis_gastos):
     diferenca_valor = kpis_vendas['total_dia'] - kpis_vendas['total_anterior']
     diferenca_unidades = kpis_vendas['contagem_dia'] - kpis_vendas['contagem_anterior']
     
-    # CORREÇÃO: Usamos 'normal' e 'inverse'. 
-    # 'Normal' = (Geralmente) Verde para positivo/zero. 'Inverse' = (Geralmente) Vermelho para negativo.
-    cor_valor = "normal" if diferenca_valor >= 0 else "inverse"
-    cor_unidades = "normal" if diferenca_unidades >= 0 else "inverse"
+    # CORREÇÃO CRÍTICA: Se o Streamlit inverteu o 'normal'/'inverse' no tema escuro:
+    # 1. Se valor >= 0 (Positivo/Bom), forçamos o 'inverse' para que ele use a cor de "bom" (Verde).
+    # 2. Se valor < 0 (Negativo/Ruim), forçamos o 'normal' para que ele use a cor de "ruim" (Vermelho).
+    # (No seu tema, o Streamlit inverteu, mas a intenção é: positivo=verde, negativo=vermelho)
+    cor_valor = "inverse" if diferenca_valor >= 0 else "normal" # Lógica Invertida para tema escuro
+    cor_unidades = "inverse" if diferenca_unidades >= 0 else "normal" # Lógica Invertida para tema escuro
     
     # Ajusta o layout para 6 colunas para incluir as DUAS comparações
     col1, col_comp_valor, col_comp_und, col2, col3, col4 = st.columns([1, 1, 1, 1, 1, 1]) 
@@ -282,7 +288,7 @@ def montar_dashboard(kpis_vendas, kpis_gastos):
         label="R$ DIF. (HOJE vs. ONTEM)",
         value=format_brl(diferenca_valor),
         delta=format_brl(diferenca_valor), 
-        delta_color=cor_valor, # COR CORRIGIDA
+        delta_color=cor_valor, # COR CORRIGIDA COM LÓGICA INVERSA
         help=f"Comparação com o total de R$ {kpis_vendas['total_anterior']:,.2f} vendido ontem."
     )
 
@@ -291,7 +297,7 @@ def montar_dashboard(kpis_vendas, kpis_gastos):
         label="UNIDADES DIF. (HOJE vs. ONTEM)",
         value=f"{diferenca_unidades:.0f} unds",
         delta=f"{diferenca_unidades:.0f} unds",
-        delta_color=cor_unidades, # COR CORRIGIDA
+        delta_color=cor_unidades, # COR CORRIGIDA COM LÓGICA INVERSA
         help=f"Variação no número de itens vendidos. Ontem: {kpis_vendas['contagem_anterior']:.0f} unds."
     )
     
