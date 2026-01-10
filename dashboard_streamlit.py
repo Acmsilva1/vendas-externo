@@ -1,9 +1,9 @@
 import pandas as pd
 import gspread
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta # Adicionado timedelta para o cálculo de ontem
 import streamlit as st 
 import time 
-import pytz 
+import pytz # Adicionado para controle de fuso horário
 
 # --- CONFIGURAÇÕES FIXAS ---
 # ID da planilha fornecido pelo usuário
@@ -67,7 +67,6 @@ def filtrar_por_mes_e_dia(df, data_foco: date):
     
     return df_mes, df_dia
 
-# MUDANÇA: ADIÇÃO DO FUSO E DA DATA ANTERIOR
 def carregar_e_limpar_dados():
     st.set_page_config(layout="wide", page_title="💰 Controle de vendas diário")
     
@@ -77,7 +76,7 @@ def carregar_e_limpar_dados():
     data_atual = agora_brasilia.date()
     data_anterior = data_atual - timedelta(days=1) # Data do dia anterior
     
-    # Inicializa DataFrames de Gastos vazios
+    # Inicializa DataFrames de Gastos e Vendas de ontem vazios
     df_gastos_mes = pd.DataFrame()
     df_gastos_dia = pd.DataFrame()
     df_vendas_anterior = pd.DataFrame()
@@ -125,11 +124,11 @@ def carregar_e_limpar_dados():
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
 
+    # Retorna o DataFrame de Vendas do dia anterior
     return df_vendas_mes, df_vendas_dia, df_gastos_mes, df_gastos_dia, df_vendas_anterior
 
-# NOVO: A função agora recebe o DataFrame do dia anterior
 def calcular_kpis_vendas(df_mes, df_dia, df_anterior):
-    """Calcula KPIs essenciais de VENDAS para o painel clean, incluindo o Cliente e o Dia Anterior."""
+    """Calcula KPIs essenciais de VENDAS para o painel clean, incluindo a comparação com o Dia Anterior."""
     kpis = {}
     
     # CÁLCULO DA QUANTIDADE VENDIDA (ASSUMINDO VÍRGULA COMO DELIMITADOR)
@@ -142,7 +141,7 @@ def calcular_kpis_vendas(df_mes, df_dia, df_anterior):
         # Atribui os totais de contagem
         kpis['contagem_mes'] = df_mes['Contagem Unidades'].sum()
         kpis['contagem_dia'] = df_dia['Contagem Unidades'].sum()
-        kpis['contagem_anterior'] = df_anterior['Contagem Unidades'].sum() # NOVO: Contagem de ontem
+        kpis['contagem_anterior'] = df_anterior['Contagem Unidades'].sum() 
 
     else:
         # Se a coluna SABORES não existir, volta a contar a linha (transação)
@@ -160,7 +159,6 @@ def calcular_kpis_vendas(df_mes, df_dia, df_anterior):
     # 1. Produto Campeão (Mês)
     if not df_mes.empty and COLUNA_ITEM_VENDIDO in df_mes.columns:
         try:
-             # Nota: O mode() pega o item mais frequente na string bruta de sabores
              kpis['item_campeao_mes'] = df_mes[COLUNA_ITEM_VENDIDO].mode().iloc[0] 
         except IndexError:
              kpis['item_campeao_mes'] = 'Nenhum item vendido em quantidade'
@@ -263,15 +261,27 @@ def montar_dashboard(kpis_vendas, kpis_gastos):
     diferenca_valor = kpis_vendas['total_dia'] - kpis_vendas['total_anterior']
     diferenca_unidades = kpis_vendas['contagem_dia'] - kpis_vendas['contagem_anterior']
     
+    # NOVO: Define as cores LITERAIS para evitar confusão no Streamlit
+    cor_valor = "green" if diferenca_valor >= 0 else "red"
+    cor_unidades = "green" if diferenca_unidades >= 0 else "red"
+    
     # Ajusta o layout para 6 colunas para incluir as DUAS comparações
     col1, col_comp_valor, col_comp_und, col2, col3, col4 = st.columns([1, 1, 1, 1, 1, 1]) 
+    
+    # Métrica de Vendas Hoje (Valor)
+    col1.metric(
+        label="R$ VENDAS HOJE", 
+        value=format_brl(kpis_vendas['total_dia']),
+        delta=f"{kpis_vendas['contagem_dia']:.0f} unds vendidas",
+        delta_color="off" 
+    )
     
     # 1. Métrica de Comparação de VALOR (HOJE vs. ONTEM)
     col_comp_valor.metric(
         label="R$ DIF. (HOJE vs. ONTEM)",
         value=format_brl(diferenca_valor),
         delta=format_brl(diferenca_valor), 
-        delta_color="normal" if diferenca_valor >= 0 else "inverse",
+        delta_color=cor_valor, # COR FORÇADA
         help=f"Comparação com o total de R$ {kpis_vendas['total_anterior']:,.2f} vendido ontem."
     )
 
@@ -280,18 +290,10 @@ def montar_dashboard(kpis_vendas, kpis_gastos):
         label="UNIDADES DIF. (HOJE vs. ONTEM)",
         value=f"{diferenca_unidades:.0f} unds",
         delta=f"{diferenca_unidades:.0f} unds",
-        delta_color="normal" if diferenca_unidades >= 0 else "inverse",
+        delta_color=cor_unidades, # COR FORÇADA
         help=f"Variação no número de itens vendidos. Ontem: {kpis_vendas['contagem_anterior']:.0f} unds."
     )
     
-    # Vendas Hoje (Valor)
-    col1.metric(
-        label="R$ VENDAS HOJE", 
-        value=format_brl(kpis_vendas['total_dia']),
-        delta=f"{kpis_vendas['contagem_dia']:.0f} unds vendidas",
-        delta_color="off" 
-    )
-
     # Vendas Mês (Valor)
     col2.metric(
         label="R$ VENDAS MÊS", 
@@ -353,6 +355,7 @@ if __name__ == "__main__":
     with st.spinner('Assando os dados, limpando e unificando Vendas e Gastos...'):
         
         try:
+            # Novo: Recebe o df_vendas_anterior
             df_vendas_mes, df_vendas_dia, df_gastos_mes, df_gastos_dia, df_vendas_anterior = carregar_e_limpar_dados()
             
             # Condição para exibir o dashboard: Basta que haja dados de Vendas OU Gastos no Mês.
