@@ -5,10 +5,8 @@ import streamlit as st
 import time 
 import pytz 
 import plotly.express as px 
-import warnings # NOVO: Para suprimir avisos do Prophet
-# Importação do Prophet
+import warnings 
 from prophet import Prophet 
-# NOVAS IMPORTAÇÕES PARA O GRÁFICO DE PRODUTIVIDADE DUAL AXIS
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
@@ -17,11 +15,14 @@ warnings.filterwarnings('ignore', category=FutureWarning)
 warnings.filterwarnings('ignore', category=RuntimeWarning)
 
 # --- CONFIGURAÇÕES FIXAS ---
-# ID da planilha fornecido pelo usuário
+# ID da planilha fornecido pelo usuário (dados atuais/vigentes)
 SPREADSHEET_ID_UNIFICADO = "1LuqYrfR8ry_MqCS93Mpj9_7Vu0i9RUTomJU2n69bEug" 
-# ABAS (em minúsculo)
-ABA_VENDAS = "vendas"
-ABA_GASTOS = "gastos"
+# ID DA PLANILHA HISTÓRICA DO USUÁRIO (Preenchido com sucesso!)
+SPREADSHEET_ID_HISTORICO = "1XWdRbHqY6DWOlSO-oJbBSyOsXmYhM_NEA2_yvWbfq2Y" 
+
+# Abas da planilha (vigente e histórica) - AGORA EM MAIÚSCULAS
+ABA_VENDAS = "VENDAS"
+ABA_GASTOS = "GASTOS"
 
 # NOME DAS COLUNAS ESSENCIAIS NA SUA PLANILHA
 # ABA VENDAS
@@ -91,6 +92,7 @@ def filtrar_por_mes_e_dia(df, data_foco: date):
     
     return df_mes, df_dia
 
+# --- FUNÇÃO ATUALIZADA PARA CARREGAR HISTÓRICO ---
 def carregar_e_limpar_dados():
     st.set_page_config(layout="wide", page_title="💰 Controle de vendas diário")
     
@@ -99,7 +101,7 @@ def carregar_e_limpar_dados():
     data_atual = agora_brasilia.date()
     data_anterior = data_atual - timedelta(days=1) 
     
-    df_vendas = pd.DataFrame() # NOVO: Inicializa o DF completo
+    df_vendas = pd.DataFrame() 
     df_gastos_mes = pd.DataFrame()
     df_gastos_dia = pd.DataFrame()
     df_vendas_anterior = pd.DataFrame()
@@ -110,14 +112,38 @@ def carregar_e_limpar_dados():
     try:
         # 1. AUTENTICAÇÃO
         gc = gspread.service_account_from_dict(st.secrets["gcp_service_account"])
-        sh = gc.open_by_key(SPREADSHEET_ID_UNIFICADO)
-
+        
         # 2. CARREGAMENTO E LIMPEZA DE VENDAS
         try:
-            df_vendas = pd.DataFrame(sh.worksheet(ABA_VENDAS).get_all_records()) # Carrega o full DF
+            # 2a. Carrega dados do ano/mês vigente (o ID principal)
+            sh_atual = gc.open_by_key(SPREADSHEET_ID_UNIFICADO)
+            df_vendas_atual = pd.DataFrame(sh_atual.worksheet(ABA_VENDAS).get_all_records()) 
+            
+            # 2b. Tenta carregar dados históricos (para o Prophet)
+            df_vendas_historico = pd.DataFrame()
+            # Verifica se o usuário preencheu o ID Histórico e se é diferente do atual
+            if SPREADSHEET_ID_HISTORICO != SPREADSHEET_ID_UNIFICADO:
+                 try:
+                    sh_hist = gc.open_by_key(SPREADSHEET_ID_HISTORICO)
+                    # Assumimos que a aba de vendas é a mesma
+                    df_vendas_historico = pd.DataFrame(sh_hist.worksheet(ABA_VENDAS).get_all_records()) 
+                    st.success("✅ Histórico de vendas (passado) carregado para a IA.")
+                 except Exception as e:
+                     st.warning(f"⚠️ Planilha histórica não encontrada ou inválida. Usando apenas dados atuais. Detalhe: {e}")
+                     df_vendas_historico = pd.DataFrame()
+            else:
+                 st.warning("⚠️ Planilha Histórica e Atual são as mesmas. O Prophet precisa de dados de longo prazo (meses/anos) para a sazonalidade.")
+                 df_vendas_historico = pd.DataFrame()
+
+            # 2c. Concatena os dados (Histórico + Atual) em um único DF 'mestre'
+            # Remove duplicatas se houver sobreposição (prioriza o mais recente, mas como são DFs separados, apenas concatena)
+            df_vendas = pd.concat([df_vendas_historico, df_vendas_atual], ignore_index=True)
+            
+            # 2d. Processa e limpa o DataFrame UNIFICADO (Total Limpo, Data/Hora, etc.)
             df_vendas = limpar_coluna_valor(df_vendas, COLUNA_VALOR_VENDA) 
             df_vendas = processar_data(df_vendas, COLUNA_DATA_HORA)
             
+            # 2e. Filtra os DataFrames de KPI a partir do UNIFICADO (o filtro de data resolve)
             df_vendas_mes, df_vendas_dia = filtrar_por_mes_e_dia(df_vendas, data_atual)
             df_vendas_anterior = df_vendas[df_vendas['Data'] == data_anterior].copy() 
 
@@ -125,9 +151,9 @@ def carregar_e_limpar_dados():
             raise ValueError(f"Erro CRÍTICO na aba VENDAS: {ve}")
 
 
-        # 3. CARREGAMENTO E LIMPEZA DE GASTOS
+        # 3. CARREGAMENTO E LIMPEZA DE GASTOS (Apenas da planilha Atual/Vigente)
         try:
-            df_gastos = pd.DataFrame(sh.worksheet(ABA_GASTOS).get_all_records())
+            df_gastos = pd.DataFrame(sh_atual.worksheet(ABA_GASTOS).get_all_records())
             df_gastos = limpar_coluna_valor(df_gastos, COLUNA_VALOR_GASTO) 
             df_gastos = processar_data(df_gastos, COLUNA_DATA_HORA) 
             df_gastos_mes, df_gastos_dia = filtrar_por_mes_e_dia(df_gastos, data_atual)
@@ -146,14 +172,16 @@ def carregar_e_limpar_dados():
 
     except ValueError as ve:
         st.error(f"ERRO CRÍTICO DE CONFIGURAÇÃO: {ve}")
-        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame() # NOVO: 7 retornos
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame() 
     except Exception as e:
         st.error(f"ERRO DE CONEXÃO/AUTENTICAÇÃO GERAL: Verifique o ID, abas e Secret. Detalhes: {e}")
-        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame() # NOVO: 7 retornos
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame() 
 
 
-    return df_vendas, df_vendas_mes, df_vendas_dia, df_gastos_mes, df_gastos_dia, df_vendas_anterior, df_gastos_anterior # NOVO: Retorna df_vendas
+    return df_vendas, df_vendas_mes, df_vendas_dia, df_gastos_mes, df_gastos_dia, df_vendas_anterior, df_gastos_anterior
 
+
+# [ ... Funções calcular_kpis_vendas e calcular_kpis_gastos (mantidas) ... ]
 def calcular_kpis_vendas(df_mes, df_dia, df_anterior):
     """Calcula KPIs essenciais de VENDAS para o painel clean, incluindo a comparação com o Dia Anterior."""
     kpis = {}
@@ -256,7 +284,7 @@ def adicionar_previsao_vendas(df_vendas_historico):
 
     # O Prophet precisa de pelo menos 14 dias para uma sazonalidade semanal confiável
     if not top_itens or len(df_vendas_historico['Data'].unique()) < 14:
-        st.info("Histórico de dados insuficiente (precisamos de pelo menos 14 dias) ou item vendido não encontrado para previsão. Comece a registrar suas vendas!")
+        st.info("Histórico de dados insuficiente (precisamos de pelo menos 14 dias). Verifique se o ID Histórico está correto!")
         return
 
     st.caption("Projeção baseada na sazonalidade (dia da semana) e tendência. Focando nos Top 3 itens.")
@@ -308,7 +336,7 @@ def adicionar_previsao_vendas(df_vendas_historico):
         except Exception as e:
             cols[i].error(f"Erro ao prever {item}. Detalhes: {e}")
 
-# --- FUNÇÃO ATUALIZADA: ADICIONA GRÁFICOS INTERATIVOS ---
+# [ ... Funções adicionar_graficos (mantidas) ... ]
 def adicionar_graficos(df_vendas_mes, df_vendas_dia, df_gastos_mes):
 
     st.divider()
@@ -489,7 +517,6 @@ def adicionar_graficos(df_vendas_mes, df_vendas_dia, df_gastos_mes):
 
 
 # --- FUNÇÃO PRINCIPAL DE MONTAGEM DO DASHBOARD STREAMLIT ---
-# NOVO: Adiciona df_vendas (histórico completo)
 def montar_dashboard(df_vendas, df_vendas_mes, df_vendas_dia, df_gastos_mes, kpis_vendas, kpis_gastos):
     
     fuso_brasilia = pytz.timezone('America/Sao_Paulo')
@@ -649,20 +676,16 @@ def montar_dashboard(df_vendas, df_vendas_mes, df_vendas_dia, df_gastos_mes, kpi
     adicionar_graficos(df_vendas_mes, df_vendas_dia, df_gastos_mes)
 
     # --- 5. PUXADINHO DA INTELIGÊNCIA PREDITIVA ---
-    # NOVO: Passa o dataframe completo para ter todo o histórico
     adicionar_previsao_vendas(df_vendas) 
 
 
 # --- EXECUÇÃO PRINCIPAL STREAMLIT ---
 if __name__ == "__main__":
     
-    # OBS: O Prophet requer que a biblioteca "prophet" seja instalada (e possivelmente pystan)
-    # Exemplo: pip install prophet
-    
-    with st.spinner('Assando os dados, limpando e unificando Vendas e Gastos... E treinando a IA...'):
+    with st.spinner('Assando os dados, limpando e unificando Vendas e Gastos... E treinando a IA com a sabedoria do passado...'):
         
         try:
-            # NOVO: Unpack de 7 DataFrames, incluindo df_vendas completo
+            # df_vendas é o DataFrame Mestre (Histórico + Atual)
             df_vendas, df_vendas_mes, df_vendas_dia, df_gastos_mes, df_gastos_dia, df_vendas_anterior, df_gastos_anterior = carregar_e_limpar_dados()
             
             if not df_vendas_mes.empty or not df_gastos_mes.empty:
@@ -670,7 +693,6 @@ if __name__ == "__main__":
                 kpis_vendas = calcular_kpis_vendas(df_vendas_mes, df_vendas_dia, df_vendas_anterior) 
                 kpis_gastos = calcular_kpis_gastos(df_gastos_mes, df_gastos_dia, df_gastos_anterior) 
                 
-                # NOVO: Passa df_vendas para a montagem do dashboard
                 montar_dashboard(df_vendas, df_vendas_mes, df_vendas_dia, df_gastos_mes, kpis_vendas, kpis_gastos)
                 
             else:
