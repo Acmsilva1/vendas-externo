@@ -41,6 +41,8 @@ def limpar_coluna_valor(df, coluna_original, coluna_limpa='Total Limpo'):
         .astype(str)
         .str.replace('R$', '', regex=False)
         .str.replace('.', '', regex=False)
+        .str.replace(',', '.', regex=False)
+        .str.replace('R$', '', regex=False) 
         .str.replace(',', '.', regex=False) 
         .str.strip()
     )
@@ -87,7 +89,7 @@ def carregar_e_limpar_dados():
         gc = gspread.service_account_from_dict(st.secrets["gcp_service_account"])
         sh = gc.open_by_key(SPREADSHEET_ID_UNIFICADO)
 
-        # 2. CARREGAMENTO E LIMPEZA DE VENDAS (CRÍTICO)
+        # 2. CARREGAMENTO E LIMPEZA DE VENDAS
         try:
             df_vendas = pd.DataFrame(sh.worksheet(ABA_VENDAS).get_all_records())
             df_vendas = limpar_coluna_valor(df_vendas, COLUNA_VALOR_VENDA) 
@@ -100,15 +102,20 @@ def carregar_e_limpar_dados():
             raise ValueError(f"Erro CRÍTICO na aba VENDAS: {ve}")
 
 
-        # 3. CARREGAMENTO E LIMPEZA DE GASTOS (TOLERANTE)
+        # 3. CARREGAMENTO E LIMPEZA DE GASTOS
         try:
             df_gastos = pd.DataFrame(sh.worksheet(ABA_GASTOS).get_all_records())
             df_gastos = limpar_coluna_valor(df_gastos, COLUNA_VALOR_GASTO) 
             df_gastos = processar_data(df_gastos, COLUNA_DATA_HORA) 
             df_gastos_mes, df_gastos_dia = filtrar_por_mes_e_dia(df_gastos, data_atual)
+        except ValueError as ve:
+             st.warning(f"⚠️ Sem dados de gasto para análise. Detalhe Técnico: {ve}")
+             df_gastos_mes = pd.DataFrame()
+             df_gastos_dia = pd.DataFrame()
         except Exception as e:
              st.warning(f"⚠️ Sem dados de gasto para análise. Erro de conexão/processamento da aba GASTOS: {e}")
-             pass 
+             df_gastos_mes = pd.DataFrame()
+             df_gastos_dia = pd.DataFrame()
 
 
     except ValueError as ve:
@@ -125,15 +132,21 @@ def calcular_kpis_vendas(df_mes, df_dia, df_anterior):
     """Calcula KPIs essenciais de VENDAS para o painel clean, incluindo a comparação com o Dia Anterior."""
     kpis = {}
         
-    def contar_itens(df):
-        if df.empty or COLUNA_ITEM_VENDIDO not in df.columns:
-            return 0
-        contagens = df[COLUNA_ITEM_VENDIDO].fillna('').astype(str).str.split(',').apply(len)
-        return contagens.sum()
+    if COLUNA_ITEM_VENDIDO in df_mes.columns:
+        def contar_itens(df):
+            if df.empty or COLUNA_ITEM_VENDIDO not in df.columns:
+                 return 0
+            contagens = df[COLUNA_ITEM_VENDIDO].fillna('').astype(str).str.split(',').apply(len)
+            return contagens.sum()
 
-    kpis['contagem_mes'] = contar_itens(df_mes)
-    kpis['contagem_dia'] = contar_itens(df_dia)
-    kpis['contagem_anterior'] = contar_itens(df_anterior)
+        kpis['contagem_mes'] = contar_itens(df_mes)
+        kpis['contagem_dia'] = contar_itens(df_dia)
+        kpis['contagem_anterior'] = contar_itens(df_anterior)
+
+    else:
+        kpis['contagem_mes'] = df_mes.shape[0]
+        kpis['contagem_dia'] = df_dia.shape[0]
+        kpis['contagem_anterior'] = df_anterior.shape[0]
 
     kpis['total_mes'] = df_mes['Total Limpo'].sum() if not df_mes.empty else 0.0
     kpis['total_dia'] = df_dia['Total Limpo'].sum() if not df_dia.empty else 0.0
@@ -145,14 +158,14 @@ def calcular_kpis_vendas(df_mes, df_dia, df_anterior):
         except IndexError:
              kpis['item_campeao_mes'] = 'Nenhum item vendido em quantidade'
     else:
-        kpis['item_campeao_mes'] = 'N/A'
+        kpis['item_campeao_mes'] = f'N/A (Col. {COLUNA_ITEM_VENDIDO} faltando ou mês vazio)'
         
     if not df_mes.empty and COLUNA_CLIENTE in df_mes.columns:
         melhor_cliente_df = df_mes.groupby(COLUNA_CLIENTE)['Total Limpo'].sum().sort_values(ascending=False)
         kpis['melhor_cliente_mes'] = melhor_cliente_df.index[0] if not melhor_cliente_df.empty else 'N/A'
         kpis['melhor_cliente_gasto'] = melhor_cliente_df.iloc[0] if not melhor_cliente_df.empty else 0.0
     else:
-        kpis['melhor_cliente_mes'] = 'N/A'
+        kpis['melhor_cliente_mes'] = f'N/A (Col. {COLUNA_CLIENTE} faltando ou mês vazio)'
         kpis['melhor_cliente_gasto'] = 0.0
 
     if not df_dia.empty:
@@ -166,7 +179,7 @@ def calcular_kpis_vendas(df_mes, df_dia, df_anterior):
     return kpis
 
 def calcular_kpis_gastos(df_mes, df_dia):
-    """Calcula KPIs essenciais de GASTOS para o painel clean."""
+    """Calcula KPIs essenciais de GASTOS para o painel clean, incluindo a contagem."""
     kpis = {}
     
     kpis['total_mes'] = df_mes['Total Limpo'].sum() if not df_mes.empty else 0.0
@@ -179,11 +192,11 @@ def calcular_kpis_gastos(df_mes, df_dia):
         kpis['item_principal_gasto_mes'] = gasto_por_item.index[0] if not gasto_por_item.empty else 'N/A'
         kpis['gasto_principal_valor'] = gasto_por_item.iloc[0] if not gasto_por_item.empty else 0.0
     else:
-        kpis['item_principal_gasto_mes'] = 'N/A'
+        kpis['item_principal_gasto_mes'] = f'N/A (Col. {COLUNA_ITEM_GASTO} faltando ou mês vazio)'
         kpis['gasto_principal_valor'] = 0.0
         
     return kpis
-
+    
 # --- FUNÇÃO ATUALIZADA: ADICIONA GRÁFICOS INTERATIVOS ---
 def adicionar_graficos(df_vendas_mes, df_vendas_dia, df_gastos_mes):
 
@@ -193,7 +206,7 @@ def adicionar_graficos(df_vendas_mes, df_vendas_dia, df_gastos_mes):
     # Gráficos lado a lado
     col_grafico_a, col_grafico_b = st.columns([1, 1]) 
 
-    # 1. NOVO GRÁFICO: LUCRO / PREJUÍZO DIÁRIO (MÊS)
+    # 1. GRÁFICO: LUCRO / PREJUÍZO DIÁRIO (MÊS) - NOVO FOCO
     if not df_vendas_mes.empty or not df_gastos_mes.empty:
         
         # Agregando vendas e gastos por data
@@ -225,7 +238,7 @@ def adicionar_graficos(df_vendas_mes, df_vendas_dia, df_gastos_mes):
         col_grafico_a.info("Sem dados de vendas ou gastos suficientes para o gráfico de Resultado Diário.")
 
 
-    # 2. GRÁFICO TOP 5 ITENS VENDIDOS (MÊS) - Permanece na Coluna B
+    # 2. GRÁFICO TOP 5 ITENS VENDIDOS (MÊS)
     if not df_vendas_mes.empty and COLUNA_ITEM_VENDIDO in df_vendas_mes.columns:
         top_sabores = df_vendas_mes[COLUNA_ITEM_VENDIDO].value_counts().head(5).reset_index()
         top_sabores.columns = ['Sabor', 'Contagem de Transações']
@@ -243,7 +256,7 @@ def adicionar_graficos(df_vendas_mes, df_vendas_dia, df_gastos_mes):
 
     st.divider()
 
-    # 3. GRÁFICO DE LINHA: VENDAS vs. GASTOS (MÊS) - Largura Total
+    # 3. GRÁFICO DE ÁREA: VENDAS vs. GASTOS (MÊS) - NOVO GRÁFICO MAIS CLARO
     if not df_vendas_mes.empty or not df_gastos_mes.empty:
         
         vendas_diarias = df_vendas_mes.groupby('Data')['Total Limpo'].sum().reset_index()
@@ -260,16 +273,17 @@ def adicionar_graficos(df_vendas_mes, df_vendas_dia, df_gastos_mes):
             value_name='Valor'
         )
         
-        fig_linha = px.line(
+        # Criação do gráfico de ÁREA
+        fig_area = px.area(
             df_longo, 
             x='Data', 
             y='Valor', 
             color='Tipo', 
-            title='Tendência Diária: Vendas vs. Gastos (Mês)',
-            line_shape='spline',
+            title='Tendência Diária: Vendas vs. Gastos (Gráfico de Área)',
+            line_group='Tipo',
             color_discrete_map={'Vendas': '#4CAF50', 'Gastos': '#F44336'}
         )
-        st.plotly_chart(fig_linha, use_container_width=True)
+        st.plotly_chart(fig_area, use_container_width=True)
 
     else:
         st.info("Sem dados suficientes no mês para gerar o gráfico de tendência Vendas vs. Gastos.")
@@ -330,7 +344,6 @@ def montar_dashboard(df_vendas_mes, df_vendas_dia, df_gastos_mes, kpis_vendas, k
     
     col1, col_comp_valor, col_comp_und, col2, col3, col4 = st.columns([1, 1, 1, 1, 1, 1]) 
     
-    # Vendas Hoje (Valor)
     col1.metric(
         label="R$ VENDAS HOJE", 
         value=format_brl(kpis_vendas['total_dia']),
@@ -338,7 +351,6 @@ def montar_dashboard(df_vendas_mes, df_vendas_dia, df_gastos_mes, kpis_vendas, k
         delta_color="off" 
     )
     
-    # Comparação de VALOR (HOJE vs. ONTEM)
     delta_valor_formatado = format_brl(diferenca_valor)
 
     col_comp_valor.metric(
@@ -349,7 +361,6 @@ def montar_dashboard(df_vendas_mes, df_vendas_dia, df_gastos_mes, kpis_vendas, k
         help=f"Comparação com o total de R$ {kpis_vendas['total_anterior']:,.2f} vendido ontem."
     )
 
-    # Comparação de QUANTIDADE DE ITENS (HOJE vs. ONTEM)
     delta_itens_formatado = f"{diferenca_itens:.0f} itens" 
 
     col_comp_und.metric(
@@ -360,7 +371,6 @@ def montar_dashboard(df_vendas_mes, df_vendas_dia, df_gastos_mes, kpis_vendas, k
         help=f"Variação no número de ITENS vendidos. Ontem: {kpis_vendas['contagem_anterior']:.0f} itens."
     )
     
-    # Vendas Mês (Valor)
     col2.metric(
         label="R$ VENDAS MÊS", 
         value=format_brl(kpis_vendas['total_mes']), 
@@ -368,7 +378,6 @@ def montar_dashboard(df_vendas_mes, df_vendas_dia, df_gastos_mes, kpis_vendas, k
         delta_color="off"
     )
     
-    # Gastos Hoje (Valor)
     col3.metric(
         label="R$ GASTOS HOJE", 
         value=format_brl(kpis_gastos['total_dia']),
@@ -377,7 +386,6 @@ def montar_dashboard(df_vendas_mes, df_vendas_dia, df_gastos_mes, kpis_vendas, k
         help="Gastos registrados na data atual."
     )
     
-    # Gastos Mês (Valor)
     col4.metric(
         label="R$ GASTOS MÊS", 
         value=format_brl(kpis_gastos['total_mes']),
@@ -393,23 +401,19 @@ def montar_dashboard(df_vendas_mes, df_vendas_dia, df_gastos_mes, kpis_vendas, k
     
     col_detalhe_a, col_detalhe_b, col_detalhe_c, col_detalhe_d = st.columns(4)
     
-    # Insight 1: Produto Campeão (Sabor)
     col_detalhe_a.info(
         f"**Sabor Mais Vendido (Mês):** {kpis_vendas['item_campeao_mes']}"
     )
     
-    # Insight 2: Melhor Cliente 
     cliente_valor = format_brl(kpis_vendas['melhor_cliente_gasto'])
     col_detalhe_b.info(
         f"**Melhor Cliente (Mês):** {kpis_vendas['melhor_cliente_mes']} ({cliente_valor})."
     )
     
-    # Insight 3: Pico de Vendas
     col_detalhe_c.info(
         f"**Pico de Vendas (Hoje):** {kpis_vendas['pico_hora_dia']}. Prepare-se para este horário!"
     )
 
-    # Insight 4: Item/Produto de maior Gasto 
     gasto_valor = format_brl(kpis_gastos['gasto_principal_valor'])
     col_detalhe_d.warning(
         f"**Item de Maior Gasto (Mês):** {kpis_gastos['item_principal_gasto_mes']} ({gasto_valor}). Revise este custo!"
@@ -432,7 +436,7 @@ if __name__ == "__main__":
                 kpis_vendas = calcular_kpis_vendas(df_vendas_mes, df_vendas_dia, df_vendas_anterior) 
                 kpis_gastos = calcular_kpis_gastos(df_gastos_mes, df_gastos_dia)
                 
-                # Monta o Dashboard
+                # O montar_dashboard agora precisa receber todos os DataFrames para a função adicionar_graficos
                 montar_dashboard(df_vendas_mes, df_vendas_dia, df_gastos_mes, kpis_vendas, kpis_gastos)
                 
             else:
