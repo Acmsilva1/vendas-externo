@@ -5,6 +5,9 @@ import streamlit as st
 import time 
 import pytz 
 import plotly.express as px 
+# NOVAS IMPORTAÇÕES PARA O GRÁFICO DE PRODUTIVIDADE DUAL AXIS
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 # --- CONFIGURAÇÕES FIXAS ---
 # ID da planilha fornecido pelo usuário
@@ -41,8 +44,6 @@ def limpar_coluna_valor(df, coluna_original, coluna_limpa='Total Limpo'):
         .astype(str)
         .str.replace('R$', '', regex=False)
         .str.replace('.', '', regex=False)
-        .str.replace(',', '.', regex=False)
-        .str.replace('R$', '', regex=False) 
         .str.replace(',', '.', regex=False) 
         .str.strip()
     )
@@ -74,6 +75,7 @@ def filtrar_por_mes_e_dia(df, data_foco: date):
     
     return df_mes, df_dia
 
+@st.cache_data(ttl=300) # Cache de 5 minutos
 def carregar_e_limpar_dados():
     st.set_page_config(layout="wide", page_title="💰 Controle de vendas diário")
     
@@ -136,6 +138,7 @@ def calcular_kpis_vendas(df_mes, df_dia, df_anterior):
         def contar_itens(df):
             if df.empty or COLUNA_ITEM_VENDIDO not in df.columns:
                  return 0
+            # Conta a quantidade de itens vendidos (separa por vírgula)
             contagens = df[COLUNA_ITEM_VENDIDO].fillna('').astype(str).str.split(',').apply(len)
             return contagens.sum()
 
@@ -143,15 +146,21 @@ def calcular_kpis_vendas(df_mes, df_dia, df_anterior):
         kpis['contagem_dia'] = contar_itens(df_dia)
         kpis['contagem_anterior'] = contar_itens(df_anterior)
 
-    else:
+    else: # Fallback se não houver coluna de itens
         kpis['contagem_mes'] = df_mes.shape[0]
         kpis['contagem_dia'] = df_dia.shape[0]
         kpis['contagem_anterior'] = df_anterior.shape[0]
 
+    # KPIs de Valor
     kpis['total_mes'] = df_mes['Total Limpo'].sum() if not df_mes.empty else 0.0
     kpis['total_dia'] = df_dia['Total Limpo'].sum() if not df_dia.empty else 0.0
     kpis['total_anterior'] = df_anterior['Total Limpo'].sum() if not df_anterior.empty else 0.0
+    
+    # NOVO KPI: TICKET MÉDIO
+    kpis['transacoes_mes'] = df_mes.shape[0] if not df_mes.empty else 0 # Número de linhas
+    kpis['ticket_medio_mes'] = kpis['total_mes'] / kpis['transacoes_mes'] if kpis['transacoes_mes'] > 0 else 0.0
 
+    # KPIs de Insights
     if not df_mes.empty and COLUNA_ITEM_VENDIDO in df_mes.columns:
         try:
              kpis['item_campeao_mes'] = df_mes[COLUNA_ITEM_VENDIDO].mode().iloc[0] 
@@ -206,27 +215,24 @@ def adicionar_graficos(df_vendas_mes, df_vendas_dia, df_gastos_mes):
     # Gráficos lado a lado
     col_grafico_a, col_grafico_b = st.columns([1, 1]) 
 
-    # 1. GRÁFICO: LUCRO / PREJUÍZO DIÁRIO (MÊS) - NOVO FOCO
+    # 1. GRÁFICO: LUCRO / PREJUÍZO DIÁRIO (MÊS) - FOCO EM FINANÇAS
     if not df_vendas_mes.empty or not df_gastos_mes.empty:
         
-        # Agregando vendas e gastos por data
         vendas_diarias = df_vendas_mes.groupby('Data')['Total Limpo'].sum().reset_index()
         vendas_diarias.rename(columns={'Total Limpo': 'Vendas'}, inplace=True)
         
         gastos_diarios = df_gastos_mes.groupby('Data')['Total Limpo'].sum().reset_index()
         gastos_diarios.rename(columns={'Total Limpo': 'Gastos'}, inplace=True)
         
-        # União, Cálculo do Resultado Líquido e Status (Lucro/Prejuízo)
         df_liquido = pd.merge(vendas_diarias, gastos_diarios, on='Data', how='outer').fillna(0)
         df_liquido['Resultado Líquido'] = df_liquido['Vendas'] - df_liquido['Gastos']
         df_liquido['Status'] = df_liquido['Resultado Líquido'].apply(lambda x: 'Lucro' if x >= 0 else 'Prejuízo')
 
-        # Criação do gráfico de barras (Lucro/Prejuízo)
         fig_liquido = px.bar(
             df_liquido, 
             x='Data', 
             y='Resultado Líquido', 
-            title='Resultado Líquido Diário (Vendas - Gastos)',
+            title='Resultado Líquido Diário (Lucro vs. Prejuízo)',
             color='Status', 
             color_discrete_map={'Lucro': '#4CAF50', 'Prejuízo': '#F44336'},
             labels={'Resultado Líquido': 'R$ Resultado'}
@@ -238,7 +244,7 @@ def adicionar_graficos(df_vendas_mes, df_vendas_dia, df_gastos_mes):
         col_grafico_a.info("Sem dados de vendas ou gastos suficientes para o gráfico de Resultado Diário.")
 
 
-    # 2. GRÁFICO TOP 5 ITENS VENDIDOS (MÊS)
+    # 2. GRÁFICO TOP 5 ITENS VENDIDOS (MÊS) - FOCO EM PRODUTO
     if not df_vendas_mes.empty and COLUNA_ITEM_VENDIDO in df_vendas_mes.columns:
         top_sabores = df_vendas_mes[COLUNA_ITEM_VENDIDO].value_counts().head(5).reset_index()
         top_sabores.columns = ['Sabor', 'Contagem de Transações']
@@ -256,37 +262,67 @@ def adicionar_graficos(df_vendas_mes, df_vendas_dia, df_gastos_mes):
 
     st.divider()
 
-    # 3. GRÁFICO DE ÁREA: VENDAS vs. GASTOS (MÊS) - NOVO GRÁFICO MAIS CLARO
-    if not df_vendas_mes.empty or not df_gastos_mes.empty:
+    # 3. NOVO GRÁFICO: PRODUTIVIDADE DIÁRIA (VALOR vs. QUANTIDADE) - FOCO EM EFICIÊNCIA/ESFORÇO
+    if not df_vendas_mes.empty:
         
-        vendas_diarias = df_vendas_mes.groupby('Data')['Total Limpo'].sum().reset_index()
-        vendas_diarias.rename(columns={'Total Limpo': 'Vendas'}, inplace=True)
+        # Agrupamento e Cálculo da Quantidade de Itens (Re-uso da lógica da função calcular_kpis_vendas)
+        df_produtividade = df_vendas_mes.groupby('Data').agg(
+            Valor_Vendido=('Total Limpo', 'sum'),
+            Quantidade_Itens=('SABORES', lambda x: x.fillna('').astype(str).str.split(',').apply(len).sum())
+        ).reset_index()
         
-        gastos_diarios = df_gastos_mes.groupby('Data')['Total Limpo'].sum().reset_index()
-        gastos_diarios.rename(columns={'Total Limpo': 'Gastos'}, inplace=True)
-        
-        df_unificado = pd.merge(vendas_diarias, gastos_diarios, on='Data', how='outer').fillna(0)
-        df_longo = df_unificado.melt(
-            id_vars='Data', 
-            value_vars=['Vendas', 'Gastos'],
-            var_name='Tipo', 
-            value_name='Valor'
+        # Criação da Visualização com Dual Axis (Dois Eixos Y)
+        fig_prod = make_subplots(specs=[[{"secondary_y": True}]])
+
+        # Coluna de Valor Vendido (Eixo Y Primário - Esquerda)
+        fig_prod.add_trace(
+            go.Bar(
+                x=df_produtividade['Data'], 
+                y=df_produtividade['Valor_Vendido'], 
+                name='R$ Valor Vendido',
+                marker_color='#4CAF50' 
+            ),
+            secondary_y=False,
+        )
+
+        # Coluna de Quantidade Vendida (Eixo Y Secundário - Direita)
+        fig_prod.add_trace(
+            go.Bar(
+                x=df_produtividade['Data'], 
+                y=df_produtividade['Quantidade_Itens'], 
+                name='Nº Itens Vendidos',
+                marker_color='#2196F3'
+            ),
+            secondary_y=True,
+        )
+
+        # Configurações de Layout
+        fig_prod.update_layout(
+            title_text="Produtividade Diária: R$ Vendido vs. Nº Itens Vendidos",
+            hovermode="x unified",
+            barmode='group'
+        )
+
+        # Configura o eixo Y primário (Valor)
+        fig_prod.update_yaxes(
+            title_text="<b>R$ Valor Vendido</b>", 
+            secondary_y=False,
+            showgrid=False 
+        )
+
+        # Configura o eixo Y secundário (Quantidade)
+        fig_prod.update_yaxes(
+            title_text="<b>Nº Itens Vendidos</b>", 
+            secondary_y=True,
+            showgrid=False 
         )
         
-        # Criação do gráfico de ÁREA
-        fig_area = px.area(
-            df_longo, 
-            x='Data', 
-            y='Valor', 
-            color='Tipo', 
-            title='Tendência Diária: Vendas vs. Gastos (Gráfico de Área)',
-            line_group='Tipo',
-            color_discrete_map={'Vendas': '#4CAF50', 'Gastos': '#F44336'}
-        )
-        st.plotly_chart(fig_area, use_container_width=True)
+        fig_prod.update_xaxes(title_text="Dia do Mês")
+
+        st.plotly_chart(fig_prod, use_container_width=True)
 
     else:
-        st.info("Sem dados suficientes no mês para gerar o gráfico de tendência Vendas vs. Gastos.")
+        st.info("Sem dados suficientes de vendas no mês para gerar o gráfico de Produtividade Diária.")
 
 
 # --- FUNÇÃO PRINCIPAL DE MONTAGEM DO DASHBOARD STREAMLIT ---
@@ -298,6 +334,7 @@ def montar_dashboard(df_vendas_mes, df_vendas_dia, df_gastos_mes, kpis_vendas, k
     mes_titulo = agora_brasilia.strftime('%B/%Y').upper()
     
     if st.button("🔴 CLIQUE AQUI PARA ATUALIZAR DADOS AGORA (FORÇAR RECARGA)", type="primary"):
+        st.cache_data.clear() # Limpa o cache para forçar a recarga real
         st.rerun() 
     
     st.title(f"🎂 Painel de Confeitaria: Mês de {mes_titulo}")
@@ -306,27 +343,34 @@ def montar_dashboard(df_vendas_mes, df_vendas_dia, df_gastos_mes, kpis_vendas, k
     
     st.divider() 
     
-    # --- 1. RESULTADO LÍQUIDO DO MÊS (KPI CHAVE) ---
-    st.header("🎯 Resultado Líquido do Mês Vigente")
+    # --- 1. RESULTADO LÍQUIDO DO MÊS E TICKET MÉDIO (KPI CHAVE) ---
+    st.header("🎯 Resultados Chave do Mês Vigente")
     
     total_vendas_mes = kpis_vendas['total_mes']
     total_gastos_mes = kpis_gastos['total_mes']
     resultado_liquido = total_vendas_mes - total_gastos_mes
+    ticket_medio = kpis_vendas['ticket_medio_mes'] # NOVO KPI
     
     cor_resultado = "normal" if resultado_liquido >= 0 else "inverse" 
 
-    col_res_a, col_res_b = st.columns([2, 1])
+    col_res_a, col_res_b, col_res_c = st.columns([2, 1, 1])
     
     col_res_a.metric(
         label="LUCRO / PREJUÍZO (MÊS)", 
         value=format_brl(resultado_liquido),
-        delta=f"Total Vendas: {format_brl(total_vendas_mes)} | Total Gastos: {format_brl(total_gastos_mes)}",
+        delta=f"Vendas: {format_brl(total_vendas_mes)} | Gastos: {format_brl(total_gastos_mes)}",
         delta_color=cor_resultado
     )
     
+    col_res_b.metric(
+        label="TICKET MÉDIO (MÊS)",
+        value=format_brl(ticket_medio),
+        help=f"Valor médio gasto por cada transação (baseado em {kpis_vendas['transacoes_mes']} transações)."
+    )
+
     if total_vendas_mes > 0:
         custo_percentual = (total_gastos_mes / total_vendas_mes) * 100
-        col_res_b.metric(
+        col_res_c.metric(
             label="% CUSTO/RECEITA",
             value=f"{custo_percentual:.1f}%",
             help="O custo operacional representa esta porcentagem da receita total."
@@ -426,6 +470,7 @@ def montar_dashboard(df_vendas_mes, df_vendas_dia, df_gastos_mes, kpis_vendas, k
 # --- EXECUÇÃO PRINCIPAL STREAMLIT ---
 if __name__ == "__main__":
     
+    # Adicionando um placeholder para o spinner, melhor UX
     with st.spinner('Assando os dados, limpando e unificando Vendas e Gastos...'):
         
         try:
@@ -436,7 +481,6 @@ if __name__ == "__main__":
                 kpis_vendas = calcular_kpis_vendas(df_vendas_mes, df_vendas_dia, df_vendas_anterior) 
                 kpis_gastos = calcular_kpis_gastos(df_gastos_mes, df_gastos_dia)
                 
-                # O montar_dashboard agora precisa receber todos os DataFrames para a função adicionar_graficos
                 montar_dashboard(df_vendas_mes, df_vendas_dia, df_gastos_mes, kpis_vendas, kpis_gastos)
                 
             else:
