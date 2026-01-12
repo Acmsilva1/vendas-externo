@@ -27,6 +27,13 @@ COLUNA_VALOR_GASTO = 'VALOR'
 # COMUM
 COLUNA_DATA_HORA = 'DATA E HORA'
 
+# NOVAS CONSTANTES PARA ORDENAÇÃO DE GRÁFICO DE DIA DA SEMANA
+DIA_SEMANA_ORDEM = ["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado", "Domingo"]
+DIA_SEMANA_MAP = {
+    0: 'Segunda', 1: 'Terça', 2: 'Quarta', 3: 'Quinta', 4: 'Sexta', 5: 'Sábado', 6: 'Domingo'
+}
+
+
 # --- FUNÇÃO HELPER PARA FORMATAR BRL ---
 def format_brl(value):
     """Formata valor float para a representação R$ X.XXX,XX."""
@@ -210,7 +217,7 @@ def calcular_kpis_gastos(df_mes, df_dia):
         
     return kpis
     
-# --- FUNÇÃO ATUALIZADA: ADICIONA GRÁFICOS INTERATIVOS (ADICIONADO TOP 5 GASTOS) ---
+# --- FUNÇÃO ATUALIZADA: ADICIONA GRÁFICOS INTERATIVOS (ADICIONADO VENDAS POR DIA DA SEMANA) ---
 def adicionar_graficos(df_vendas_mes, df_vendas_dia, df_gastos_mes):
 
     st.divider()
@@ -291,7 +298,6 @@ def adicionar_graficos(df_vendas_mes, df_vendas_dia, df_gastos_mes):
         top_sabores = df_vendas_mes[COLUNA_ITEM_VENDIDO].value_counts().head(5).reset_index()
         top_sabores.columns = ['Sabor', 'Contagem de Transações']
         
-        # Formatação para incluir a contagem na legenda (solicitação anterior)
         top_sabores['Legenda'] = top_sabores['Sabor'] + ' (' + top_sabores['Contagem de Transações'].astype(str) + ' unid.)'
         
         fig_top = px.pie(
@@ -328,19 +334,18 @@ def adicionar_graficos(df_vendas_mes, df_vendas_dia, df_gastos_mes):
     else:
         col_grafico_c.info("Sem dados de clientes para gerar o gráfico de fidelidade.")
 
-    # --- 3. NOVA SEÇÃO: DETALHAMENTO DE CUSTOS (TOP 5 GASTOS) ---
+    # --- 3. NOVA SEÇÃO: DETALHAMENTO DE CUSTOS E PRODUTIVIDADE SEMANAL ---
     st.divider()
-    st.header("💸 Detalhamento de Custos (Top 5 Gastos)") 
+    st.header("💸 Detalhamento de Custos e Produtividade Semanal") 
 
     col_vazia_2, col_gasto_a, col_gasto_b = st.columns([0.1, 1, 1])
 
+    # 3.1 GRÁFICO TOP 5 ITENS DE MAIOR CUSTO (MÊS)
     if not df_gastos_mes.empty and COLUNA_ITEM_GASTO in df_gastos_mes.columns:
         
-        # Agrupa por item de gasto e SOMA o valor total gasto ('Total Limpo')
         top_gastos_valor = df_gastos_mes.groupby(COLUNA_ITEM_GASTO)['Total Limpo'].sum().sort_values(ascending=False).head(5).reset_index()
         top_gastos_valor.columns = ['Item Gasto', 'Valor Gasto']
         
-        # Adiciona a formatação de legenda (Nome do Item + R$ Valor Gasto)
         top_gastos_valor['Legenda'] = top_gastos_valor['Item Gasto'] + ' (' + top_gastos_valor['Valor Gasto'].apply(lambda x: f"R$ {x:,.2f}".replace('.', 'X').replace(',', '.').replace('X', ',')) + ')'
         
         fig_gastos = px.pie(
@@ -350,12 +355,46 @@ def adicionar_graficos(df_vendas_mes, df_vendas_dia, df_gastos_mes):
             title='Top 5 Itens de Maior Custo (por R$ Gasto)',
             hole=.3 
         )
-        # Ajusta o template do hover para clareza
         fig_gastos.update_traces(hovertemplate="Item Gasto: %{label}<br>Valor Total: %{value:$.2f}<br>Percentual: %{percent}")
         
         col_gasto_a.plotly_chart(fig_gastos, use_container_width=True)
     else:
         col_gasto_a.info("Sem dados de gastos para gerar o gráfico Top 5 Custos.")
+
+    
+    # 3.2 NOVO GRÁFICO: VENDAS POR DIA DA SEMANA (MÊS)
+    if not df_vendas_mes.empty:
+        
+        # 1. Extrair o dia da semana (0=Segunda, 6=Domingo)
+        df_vendas_mes['Dia_Semana_Num'] = df_vendas_mes['Data/Hora'].dt.dayofweek
+        
+        # 2. Mapear para nome em Português
+        df_vendas_mes['Dia_Semana'] = df_vendas_mes['Dia_Semana_Num'].map(DIA_SEMANA_MAP)
+        
+        # 3. Agrupar e Somar o valor total vendido
+        vendas_por_dia = df_vendas_mes.groupby(['Dia_Semana_Num', 'Dia_Semana'])['Total Limpo'].sum().reset_index()
+        vendas_por_dia.rename(columns={'Total Limpo': 'R$ Total Vendido'}, inplace=True)
+        
+        # 4. Criação do gráfico de colunas
+        fig_dia_semana = px.bar(
+            vendas_por_dia,
+            x='Dia_Semana',
+            y='R$ Total Vendido',
+            title='Total de Vendas por Dia da Semana (Mês)',
+            # Garante que o Plotly use a ordem de 'Segunda' a 'Domingo'
+            category_orders={"Dia_Semana": DIA_SEMANA_ORDEM}, 
+            color='R$ Total Vendido', 
+            color_continuous_scale=px.colors.sequential.Plotly3 
+        )
+        
+        # Formatação
+        fig_dia_semana.update_layout(xaxis_title="Dia da Semana", yaxis_title="R$ Total Vendido")
+        fig_dia_semana.update_yaxes(tickprefix='R$', tickformat=",.2f")
+        
+        col_gasto_b.plotly_chart(fig_dia_semana, use_container_width=True)
+    else:
+        col_gasto_b.info("Sem dados de vendas para gerar o gráfico de Produtividade Semanal.")
+
 
 # --- FUNÇÃO PRINCIPAL DE MONTAGEM DO DASHBOARD STREAMLIT ---
 def montar_dashboard(df_vendas_mes, df_vendas_dia, df_gastos_mes, kpis_vendas, kpis_gastos):
