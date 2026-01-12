@@ -75,6 +75,7 @@ def filtrar_por_mes_e_dia(df, data_foco: date):
     
     return df_mes, df_dia
 
+@st.cache_data(ttl=300) # Cache de 5 minutos
 def carregar_e_limpar_dados():
     st.set_page_config(layout="wide", page_title="💰 Controle de vendas diário")
     
@@ -214,28 +215,22 @@ def adicionar_graficos(df_vendas_mes, df_vendas_dia, df_gastos_mes):
     # 1. GRÁFICO ÚNICO: PRODUTIVIDADE E RESULTADO DIÁRIO (UNIFICADO)
     if not df_vendas_mes.empty or not df_gastos_mes.empty:
         
-        # --- PREPARAÇÃO DE DADOS ---
-        # 1. Agrega Vendas por Data e Quantidade de Itens Vendidos (Receita/Produtividade)
+        # --- PREPARAÇÃO DE DADOS (Unificado) ---
         df_vendas_temp = df_vendas_mes.copy()
         df_vendas_temp['Data'] = pd.to_datetime(df_vendas_temp['Data'])
         
         df_vendas_agregado = df_vendas_temp.groupby('Data').agg(
             Valor=('Total Limpo', 'sum'),
-            # Recalcula a quantidade de itens vendidos por dia
             Quantidade_Itens=('SABORES', lambda x: x.fillna('').astype(str).str.split(',').apply(len).sum())
         ).reset_index()
         
-        # 2. Agrega Gastos por Data (Custo/Despesa)
         df_gastos_temp = df_gastos_mes.copy()
         df_gastos_temp['Data'] = pd.to_datetime(df_gastos_temp['Data'])
         
         df_gastos_agregado = df_gastos_temp.groupby('Data')['Total Limpo'].sum().reset_index()
         df_gastos_agregado.rename(columns={'Total Limpo': 'Custo'}, inplace=True)
         
-        # 3. Unifica Vendas e Gastos
         df_unificado = pd.merge(df_vendas_agregado, df_gastos_agregado, on='Data', how='outer').fillna(0)
-        
-        # 4. Criamos uma coluna de Gasto NEGATIVO para o gráfico bi-direcional
         df_unificado['Custo Negativo'] = -df_unificado['Custo']
         
         # --- CRIAÇÃO DO GRÁFICO (Eixo Duplo para Valor e Quantidade) ---
@@ -261,7 +256,7 @@ def adicionar_graficos(df_vendas_mes, df_vendas_dia, df_gastos_mes):
                 y=df_unificado['Custo Negativo'], 
                 name='R$ Custos',
                 marker_color='#F44336', # Vermelho
-                hovertemplate="<b>Custos:</b> R$ %{y:,.2f}<br>" # Formato R$ para negativo
+                hovertemplate="<b>Custos:</b> R$ %{y:,.2f}<br>" 
             ),
             secondary_y=False,
         )
@@ -282,7 +277,7 @@ def adicionar_graficos(df_vendas_mes, df_vendas_dia, df_gastos_mes):
         # Configurações de Layout
         fig_unificado.update_layout(
             title_text="Produtividade e Resultado Diário (Vendas, Custos e Itens Vendidos)",
-            barmode='overlay', # Barras se sobrepõem
+            barmode='overlay', 
             hovermode="x unified",
             xaxis_title='Dia do Mês'
         )
@@ -309,10 +304,10 @@ def adicionar_graficos(df_vendas_mes, df_vendas_dia, df_gastos_mes):
         
     st.divider()
 
-    # 2. GRÁFICO TOP 5 ITENS VENDIDOS (MÊS) - FOCO EM PRODUTO
-    # Mantido o layout em coluna para a visualização Top 5
-    col_vazio, col_grafico_b = st.columns([1, 1])
+    # --- 2. GRÁFICOS DE PIZZA (TOP ITENS e TOP CLIENTES) ---
+    col_vazia, col_grafico_b, col_grafico_c = st.columns([0.1, 1, 1]) 
 
+    # 2.1 GRÁFICO TOP 5 ITENS VENDIDOS (MÊS) - FOCO EM PRODUTO
     if not df_vendas_mes.empty and COLUNA_ITEM_VENDIDO in df_vendas_mes.columns:
         top_sabores = df_vendas_mes[COLUNA_ITEM_VENDIDO].value_counts().head(5).reset_index()
         top_sabores.columns = ['Sabor', 'Contagem de Transações']
@@ -321,12 +316,35 @@ def adicionar_graficos(df_vendas_mes, df_vendas_dia, df_gastos_mes):
             top_sabores, 
             values='Contagem de Transações', 
             names='Sabor', 
-            title='Top 5 Itens Mais Vendidos (Mês)',
+            title='Top 5 Itens Mais Vendidos (Contagem)',
             hole=.3 
         )
         col_grafico_b.plotly_chart(fig_top, use_container_width=True)
     else:
         col_grafico_b.info("Sem dados de itens vendidos para gerar o gráfico Top 5.")
+
+    # 2.2 NOVO GRÁFICO TOP 5 CLIENTES MAIS FIÉIS (MÊS) - FOCO EM FIDELIDADE
+    if not df_vendas_mes.empty and COLUNA_CLIENTE in df_vendas_mes.columns:
+        
+        # Agrupa por cliente e SOMA o valor total gasto ('Total Limpo')
+        top_clientes_valor = df_vendas_mes.groupby(COLUNA_CLIENTE)['Total Limpo'].sum().sort_values(ascending=False).head(5).reset_index()
+        top_clientes_valor.columns = ['Cliente', 'Valor Gasto']
+        
+        # Função para formatar o valor na legenda (opcional, mas melhora a visualização)
+        top_clientes_valor['Legenda'] = top_clientes_valor['Cliente'] + ' (' + top_clientes_valor['Valor Gasto'].apply(lambda x: f"R$ {x:,.2f}".replace('.', 'X').replace(',', '.').replace('X', ',')) + ')'
+        
+        fig_clientes = px.pie(
+            top_clientes_valor, 
+            values='Valor Gasto', 
+            names='Legenda', 
+            title='Top 5 Clientes Mais Fiéis (por R$ Gasto)',
+            hole=.3 
+        )
+        fig_clientes.update_traces(hovertemplate="Cliente: %{label}<br>Valor Total: %{value:$.2f}<br>Percentual: %{percent}")
+        
+        col_grafico_c.plotly_chart(fig_clientes, use_container_width=True)
+    else:
+        col_grafico_c.info("Sem dados de clientes para gerar o gráfico de fidelidade.")
 
 
 # --- FUNÇÃO PRINCIPAL DE MONTAGEM DO DASHBOARD STREAMLIT ---
@@ -338,6 +356,7 @@ def montar_dashboard(df_vendas_mes, df_vendas_dia, df_gastos_mes, kpis_vendas, k
     mes_titulo = agora_brasilia.strftime('%B/%Y').upper()
     
     if st.button("🔴 CLIQUE AQUI PARA ATUALIZAR DADOS AGORA (FORÇAR RECARGA)", type="primary"):
+        st.cache_data.clear()
         st.rerun() 
     
     st.title(f"🎂 Painel de Confeitaria: Mês de {mes_titulo}")
@@ -483,6 +502,7 @@ if __name__ == "__main__":
                 kpis_vendas = calcular_kpis_vendas(df_vendas_mes, df_vendas_dia, df_vendas_anterior) 
                 kpis_gastos = calcular_kpis_gastos(df_gastos_mes, df_gastos_dia)
                 
+                # Montar o dashboard passando os DataFrames e KPIs
                 montar_dashboard(df_vendas_mes, df_vendas_dia, df_gastos_mes, kpis_vendas, kpis_gastos)
                 
             else:
