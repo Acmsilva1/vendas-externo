@@ -1,6 +1,6 @@
 import pandas as pd
 import gspread
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta 
 import streamlit as st 
 import time 
 import pytz 
@@ -75,7 +75,6 @@ def filtrar_por_mes_e_dia(df, data_foco: date):
     
     return df_mes, df_dia
 
-@st.cache_data(ttl=300) # Cache de 5 minutos
 def carregar_e_limpar_dados():
     st.set_page_config(layout="wide", page_title="💰 Controle de vendas diário")
     
@@ -211,40 +210,109 @@ def adicionar_graficos(df_vendas_mes, df_vendas_dia, df_gastos_mes):
 
     st.divider()
     st.header("📈 Visualização Detalhada")
-    
-    # Gráficos lado a lado
-    col_grafico_a, col_grafico_b = st.columns([1, 1]) 
 
-    # 1. GRÁFICO: LUCRO / PREJUÍZO DIÁRIO (MÊS) - FOCO EM FINANÇAS
+    # 1. GRÁFICO ÚNICO: PRODUTIVIDADE E RESULTADO DIÁRIO (UNIFICADO)
     if not df_vendas_mes.empty or not df_gastos_mes.empty:
         
-        vendas_diarias = df_vendas_mes.groupby('Data')['Total Limpo'].sum().reset_index()
-        vendas_diarias.rename(columns={'Total Limpo': 'Vendas'}, inplace=True)
+        # --- PREPARAÇÃO DE DADOS ---
+        # 1. Agrega Vendas por Data e Quantidade de Itens Vendidos (Receita/Produtividade)
+        df_vendas_temp = df_vendas_mes.copy()
+        df_vendas_temp['Data'] = pd.to_datetime(df_vendas_temp['Data'])
         
-        gastos_diarios = df_gastos_mes.groupby('Data')['Total Limpo'].sum().reset_index()
-        gastos_diarios.rename(columns={'Total Limpo': 'Gastos'}, inplace=True)
+        df_vendas_agregado = df_vendas_temp.groupby('Data').agg(
+            Valor=('Total Limpo', 'sum'),
+            # Recalcula a quantidade de itens vendidos por dia
+            Quantidade_Itens=('SABORES', lambda x: x.fillna('').astype(str).str.split(',').apply(len).sum())
+        ).reset_index()
         
-        df_liquido = pd.merge(vendas_diarias, gastos_diarios, on='Data', how='outer').fillna(0)
-        df_liquido['Resultado Líquido'] = df_liquido['Vendas'] - df_liquido['Gastos']
-        df_liquido['Status'] = df_liquido['Resultado Líquido'].apply(lambda x: 'Lucro' if x >= 0 else 'Prejuízo')
+        # 2. Agrega Gastos por Data (Custo/Despesa)
+        df_gastos_temp = df_gastos_mes.copy()
+        df_gastos_temp['Data'] = pd.to_datetime(df_gastos_temp['Data'])
+        
+        df_gastos_agregado = df_gastos_temp.groupby('Data')['Total Limpo'].sum().reset_index()
+        df_gastos_agregado.rename(columns={'Total Limpo': 'Custo'}, inplace=True)
+        
+        # 3. Unifica Vendas e Gastos
+        df_unificado = pd.merge(df_vendas_agregado, df_gastos_agregado, on='Data', how='outer').fillna(0)
+        
+        # 4. Criamos uma coluna de Gasto NEGATIVO para o gráfico bi-direcional
+        df_unificado['Custo Negativo'] = -df_unificado['Custo']
+        
+        # --- CRIAÇÃO DO GRÁFICO (Eixo Duplo para Valor e Quantidade) ---
 
-        fig_liquido = px.bar(
-            df_liquido, 
-            x='Data', 
-            y='Resultado Líquido', 
-            title='Resultado Líquido Diário (Lucro vs. Prejuízo)',
-            color='Status', 
-            color_discrete_map={'Lucro': '#4CAF50', 'Prejuízo': '#F44336'},
-            labels={'Resultado Líquido': 'R$ Resultado'}
+        fig_unificado = make_subplots(specs=[[{"secondary_y": True}]])
+
+        # BARRA 1: VALOR DE VENDAS (POSITIVO) - Eixo Y Primário (Valor R$)
+        fig_unificado.add_trace(
+            go.Bar(
+                x=df_unificado['Data'], 
+                y=df_unificado['Valor'], 
+                name='R$ Vendas',
+                marker_color='#4CAF50', # Verde
+                hovertemplate="<b>Vendas:</b> %{y:$.2f}<br>" 
+            ),
+            secondary_y=False,
         )
-        fig_liquido.update_layout(xaxis_title='Dia do Mês') 
-        
-        col_grafico_a.plotly_chart(fig_liquido, use_container_width=True)
-    else:
-        col_grafico_a.info("Sem dados de vendas ou gastos suficientes para o gráfico de Resultado Diário.")
 
+        # BARRA 2: CUSTO (NEGATIVO) - Eixo Y Primário (Valor R$)
+        fig_unificado.add_trace(
+            go.Bar(
+                x=df_unificado['Data'], 
+                y=df_unificado['Custo Negativo'], 
+                name='R$ Custos',
+                marker_color='#F44336', # Vermelho
+                hovertemplate="<b>Custos:</b> R$ %{y:,.2f}<br>" # Formato R$ para negativo
+            ),
+            secondary_y=False,
+        )
+        
+        # LINHA: QUANTIDADE VENDIDA (Eixo Y Secundário - Direita)
+        fig_unificado.add_trace(
+            go.Scatter(
+                x=df_unificado['Data'], 
+                y=df_unificado['Quantidade_Itens'], 
+                mode='lines+markers',
+                name='Nº Itens Vendidos',
+                line=dict(color='#FFC107', width=3), # Amarelo/Dourado
+                hovertemplate="<b>Itens Vendidos:</b> %{y}"
+            ),
+            secondary_y=True,
+        )
+
+        # Configurações de Layout
+        fig_unificado.update_layout(
+            title_text="Produtividade e Resultado Diário (Vendas, Custos e Itens Vendidos)",
+            barmode='overlay', # Barras se sobrepõem
+            hovermode="x unified",
+            xaxis_title='Dia do Mês'
+        )
+
+        # Configura o eixo Y primário (Valor R$)
+        fig_unificado.update_yaxes(
+            title_text="<b>R$ Valor (Vendas Positivo | Custos Negativo)</b>", 
+            secondary_y=False,
+            tickprefix='R$',
+            tickformat=",.2f"
+        )
+
+        # Configura o eixo Y secundário (Quantidade)
+        fig_unificado.update_yaxes(
+            title_text="<b>Nº Itens Vendidos (Linha)</b>", 
+            secondary_y=True,
+            tickformat=",d" 
+        )
+        
+        st.plotly_chart(fig_unificado, use_container_width=True)
+
+    else:
+        st.info("Sem dados de vendas ou gastos suficientes para gerar o gráfico unificado de Produtividade/Resultado.")
+        
+    st.divider()
 
     # 2. GRÁFICO TOP 5 ITENS VENDIDOS (MÊS) - FOCO EM PRODUTO
+    # Mantido o layout em coluna para a visualização Top 5
+    col_vazio, col_grafico_b = st.columns([1, 1])
+
     if not df_vendas_mes.empty and COLUNA_ITEM_VENDIDO in df_vendas_mes.columns:
         top_sabores = df_vendas_mes[COLUNA_ITEM_VENDIDO].value_counts().head(5).reset_index()
         top_sabores.columns = ['Sabor', 'Contagem de Transações']
@@ -260,70 +328,6 @@ def adicionar_graficos(df_vendas_mes, df_vendas_dia, df_gastos_mes):
     else:
         col_grafico_b.info("Sem dados de itens vendidos para gerar o gráfico Top 5.")
 
-    st.divider()
-
-    # 3. NOVO GRÁFICO: PRODUTIVIDADE DIÁRIA (VALOR vs. QUANTIDADE) - FOCO EM EFICIÊNCIA/ESFORÇO
-    if not df_vendas_mes.empty:
-        
-        # Agrupamento e Cálculo da Quantidade de Itens (Re-uso da lógica da função calcular_kpis_vendas)
-        df_produtividade = df_vendas_mes.groupby('Data').agg(
-            Valor_Vendido=('Total Limpo', 'sum'),
-            Quantidade_Itens=('SABORES', lambda x: x.fillna('').astype(str).str.split(',').apply(len).sum())
-        ).reset_index()
-        
-        # Criação da Visualização com Dual Axis (Dois Eixos Y)
-        fig_prod = make_subplots(specs=[[{"secondary_y": True}]])
-
-        # Coluna de Valor Vendido (Eixo Y Primário - Esquerda)
-        fig_prod.add_trace(
-            go.Bar(
-                x=df_produtividade['Data'], 
-                y=df_produtividade['Valor_Vendido'], 
-                name='R$ Valor Vendido',
-                marker_color='#4CAF50' 
-            ),
-            secondary_y=False,
-        )
-
-        # Coluna de Quantidade Vendida (Eixo Y Secundário - Direita)
-        fig_prod.add_trace(
-            go.Bar(
-                x=df_produtividade['Data'], 
-                y=df_produtividade['Quantidade_Itens'], 
-                name='Nº Itens Vendidos',
-                marker_color='#2196F3'
-            ),
-            secondary_y=True,
-        )
-
-        # Configurações de Layout
-        fig_prod.update_layout(
-            title_text="Produtividade Diária: R$ Vendido vs. Nº Itens Vendidos",
-            hovermode="x unified",
-            barmode='group'
-        )
-
-        # Configura o eixo Y primário (Valor)
-        fig_prod.update_yaxes(
-            title_text="<b>R$ Valor Vendido</b>", 
-            secondary_y=False,
-            showgrid=False 
-        )
-
-        # Configura o eixo Y secundário (Quantidade)
-        fig_prod.update_yaxes(
-            title_text="<b>Nº Itens Vendidos</b>", 
-            secondary_y=True,
-            showgrid=False 
-        )
-        
-        fig_prod.update_xaxes(title_text="Dia do Mês")
-
-        st.plotly_chart(fig_prod, use_container_width=True)
-
-    else:
-        st.info("Sem dados suficientes de vendas no mês para gerar o gráfico de Produtividade Diária.")
-
 
 # --- FUNÇÃO PRINCIPAL DE MONTAGEM DO DASHBOARD STREAMLIT ---
 def montar_dashboard(df_vendas_mes, df_vendas_dia, df_gastos_mes, kpis_vendas, kpis_gastos):
@@ -334,7 +338,6 @@ def montar_dashboard(df_vendas_mes, df_vendas_dia, df_gastos_mes, kpis_vendas, k
     mes_titulo = agora_brasilia.strftime('%B/%Y').upper()
     
     if st.button("🔴 CLIQUE AQUI PARA ATUALIZAR DADOS AGORA (FORÇAR RECARGA)", type="primary"):
-        st.cache_data.clear() # Limpa o cache para forçar a recarga real
         st.rerun() 
     
     st.title(f"🎂 Painel de Confeitaria: Mês de {mes_titulo}")
@@ -349,7 +352,7 @@ def montar_dashboard(df_vendas_mes, df_vendas_dia, df_gastos_mes, kpis_vendas, k
     total_vendas_mes = kpis_vendas['total_mes']
     total_gastos_mes = kpis_gastos['total_mes']
     resultado_liquido = total_vendas_mes - total_gastos_mes
-    ticket_medio = kpis_vendas['ticket_medio_mes'] # NOVO KPI
+    ticket_medio = kpis_vendas['ticket_medio_mes'] 
     
     cor_resultado = "normal" if resultado_liquido >= 0 else "inverse" 
 
@@ -470,7 +473,6 @@ def montar_dashboard(df_vendas_mes, df_vendas_dia, df_gastos_mes, kpis_vendas, k
 # --- EXECUÇÃO PRINCIPAL STREAMLIT ---
 if __name__ == "__main__":
     
-    # Adicionando um placeholder para o spinner, melhor UX
     with st.spinner('Assando os dados, limpando e unificando Vendas e Gastos...'):
         
         try:
