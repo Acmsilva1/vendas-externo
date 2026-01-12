@@ -4,7 +4,7 @@ from datetime import datetime, date, timedelta
 import streamlit as st 
 import time 
 import pytz 
-import plotly.express as px # NOVO: Importação do Plotly para os gráficos
+import plotly.express as px 
 
 # --- CONFIGURAÇÕES FIXAS ---
 # ID da planilha fornecido pelo usuário
@@ -41,7 +41,7 @@ def limpar_coluna_valor(df, coluna_original, coluna_limpa='Total Limpo'):
         .astype(str)
         .str.replace('R$', '', regex=False)
         .str.replace('.', '', regex=False)
-        .str.replace(',', '.', regex=False) # Troca vírgula por ponto (separador decimal)
+        .str.replace(',', '.', regex=False) 
         .str.strip()
     )
     df[coluna_limpa] = pd.to_numeric(df[coluna_limpa], errors='coerce')
@@ -75,13 +75,11 @@ def filtrar_por_mes_e_dia(df, data_foco: date):
 def carregar_e_limpar_dados():
     st.set_page_config(layout="wide", page_title="💰 Controle de vendas diário")
     
-    # AJUSTE: Definindo o FUSO HORÁRIO de São Paulo (Brasília)
     fuso_brasilia = pytz.timezone('America/Sao_Paulo')
     agora_brasilia = datetime.now(fuso_brasilia) 
     data_atual = agora_brasilia.date()
-    data_anterior = data_atual - timedelta(days=1) # Data do dia anterior
+    data_anterior = data_atual - timedelta(days=1) 
     
-    # Inicializa DataFrames
     df_vendas_mes, df_vendas_dia, df_gastos_mes, df_gastos_dia, df_vendas_anterior = [pd.DataFrame() for _ in range(5)]
 
     try:
@@ -95,7 +93,6 @@ def carregar_e_limpar_dados():
             df_vendas = limpar_coluna_valor(df_vendas, COLUNA_VALOR_VENDA) 
             df_vendas = processar_data(df_vendas, COLUNA_DATA_HORA)
             
-            # FILTROS DE DATAS
             df_vendas_mes, df_vendas_dia = filtrar_por_mes_e_dia(df_vendas, data_atual)
             df_vendas_anterior = df_vendas[df_vendas['Data'] == data_anterior].copy() 
 
@@ -111,7 +108,6 @@ def carregar_e_limpar_dados():
             df_gastos_mes, df_gastos_dia = filtrar_por_mes_e_dia(df_gastos, data_atual)
         except Exception as e:
              st.warning(f"⚠️ Sem dados de gasto para análise. Erro de conexão/processamento da aba GASTOS: {e}")
-             # Deixa os DataFrames de Gasto vazios
              pass 
 
 
@@ -139,14 +135,10 @@ def calcular_kpis_vendas(df_mes, df_dia, df_anterior):
     kpis['contagem_dia'] = contar_itens(df_dia)
     kpis['contagem_anterior'] = contar_itens(df_anterior)
 
-    # KPIs de Totais de Valor
     kpis['total_mes'] = df_mes['Total Limpo'].sum() if not df_mes.empty else 0.0
     kpis['total_dia'] = df_dia['Total Limpo'].sum() if not df_dia.empty else 0.0
     kpis['total_anterior'] = df_anterior['Total Limpo'].sum() if not df_anterior.empty else 0.0
 
-    # --- INSIGHTS ---
-
-    # 1. Produto Campeão (Mês)
     if not df_mes.empty and COLUNA_ITEM_VENDIDO in df_mes.columns:
         try:
              kpis['item_campeao_mes'] = df_mes[COLUNA_ITEM_VENDIDO].mode().iloc[0] 
@@ -155,7 +147,6 @@ def calcular_kpis_vendas(df_mes, df_dia, df_anterior):
     else:
         kpis['item_campeao_mes'] = 'N/A'
         
-    # 2. Melhor Cliente (Mês)
     if not df_mes.empty and COLUNA_CLIENTE in df_mes.columns:
         melhor_cliente_df = df_mes.groupby(COLUNA_CLIENTE)['Total Limpo'].sum().sort_values(ascending=False)
         kpis['melhor_cliente_mes'] = melhor_cliente_df.index[0] if not melhor_cliente_df.empty else 'N/A'
@@ -164,7 +155,6 @@ def calcular_kpis_vendas(df_mes, df_dia, df_anterior):
         kpis['melhor_cliente_mes'] = 'N/A'
         kpis['melhor_cliente_gasto'] = 0.0
 
-    # 3. Pico de Vendas (Hoje)
     if not df_dia.empty:
         pico_hora_df = df_dia['Hora'].value_counts()
         pico_hora_str = f"{pico_hora_df.index[0]}h" if not pico_hora_df.empty else 'N/A'
@@ -179,13 +169,11 @@ def calcular_kpis_gastos(df_mes, df_dia):
     """Calcula KPIs essenciais de GASTOS para o painel clean."""
     kpis = {}
     
-    # KPIs do Mês e Dia
     kpis['total_mes'] = df_mes['Total Limpo'].sum() if not df_mes.empty else 0.0
     kpis['contagem_mes'] = df_mes.shape[0]
     kpis['total_dia'] = df_dia['Total Limpo'].sum() if not df_dia.empty else 0.0
     kpis['contagem_dia'] = df_dia.shape[0]
 
-    # Dados Adicionais (Insights)
     if not df_mes.empty and COLUNA_ITEM_GASTO in df_mes.columns:
         gasto_por_item = df_mes.groupby(COLUNA_ITEM_GASTO)['Total Limpo'].sum().sort_values(ascending=False)
         kpis['item_principal_gasto_mes'] = gasto_por_item.index[0] if not gasto_por_item.empty else 'N/A'
@@ -196,7 +184,7 @@ def calcular_kpis_gastos(df_mes, df_dia):
         
     return kpis
 
-# --- FUNÇÃO NOVA: ADICIONA GRÁFICOS INTERATIVOS ---
+# --- FUNÇÃO ATUALIZADA: ADICIONA GRÁFICOS INTERATIVOS ---
 def adicionar_graficos(df_vendas_mes, df_vendas_dia, df_gastos_mes):
 
     st.divider()
@@ -205,28 +193,40 @@ def adicionar_graficos(df_vendas_mes, df_vendas_dia, df_gastos_mes):
     # Gráficos lado a lado
     col_grafico_a, col_grafico_b = st.columns([1, 1]) 
 
-    # 1. GRÁFICO DE VENDAS POR HORA (HOJE)
-    if not df_vendas_dia.empty:
-        vendas_por_hora = df_vendas_dia.groupby('Hora')['Total Limpo'].sum().reset_index()
-        vendas_por_hora.columns = ['Hora', 'Total Vendido']
+    # 1. NOVO GRÁFICO: LUCRO / PREJUÍZO DIÁRIO (MÊS)
+    if not df_vendas_mes.empty or not df_gastos_mes.empty:
         
-        fig_hora = px.bar(
-            vendas_por_hora, 
-            x='Hora', 
-            y='Total Vendido', 
-            title='Total Vendido por Hora (Hoje)',
-            labels={'Hora': 'Hora do Dia (24h)', 'Total Vendido': 'R$ Total'},
-            color_discrete_sequence=['#4CAF50'] # Verde
+        # Agregando vendas e gastos por data
+        vendas_diarias = df_vendas_mes.groupby('Data')['Total Limpo'].sum().reset_index()
+        vendas_diarias.rename(columns={'Total Limpo': 'Vendas'}, inplace=True)
+        
+        gastos_diarios = df_gastos_mes.groupby('Data')['Total Limpo'].sum().reset_index()
+        gastos_diarios.rename(columns={'Total Limpo': 'Gastos'}, inplace=True)
+        
+        # União, Cálculo do Resultado Líquido e Status (Lucro/Prejuízo)
+        df_liquido = pd.merge(vendas_diarias, gastos_diarios, on='Data', how='outer').fillna(0)
+        df_liquido['Resultado Líquido'] = df_liquido['Vendas'] - df_liquido['Gastos']
+        df_liquido['Status'] = df_liquido['Resultado Líquido'].apply(lambda x: 'Lucro' if x >= 0 else 'Prejuízo')
+
+        # Criação do gráfico de barras (Lucro/Prejuízo)
+        fig_liquido = px.bar(
+            df_liquido, 
+            x='Data', 
+            y='Resultado Líquido', 
+            title='Resultado Líquido Diário (Vendas - Gastos)',
+            color='Status', 
+            color_discrete_map={'Lucro': '#4CAF50', 'Prejuízo': '#F44336'},
+            labels={'Resultado Líquido': 'R$ Resultado'}
         )
-        fig_hora.update_layout(xaxis=dict(tick0=0, dtick=1))
-        col_grafico_a.plotly_chart(fig_hora, use_container_width=True)
+        fig_liquido.update_layout(xaxis_title='Dia do Mês') 
+        
+        col_grafico_a.plotly_chart(fig_liquido, use_container_width=True)
     else:
-        col_grafico_a.info("Sem dados de vendas para gerar o gráfico horário hoje.")
+        col_grafico_a.info("Sem dados de vendas ou gastos suficientes para o gráfico de Resultado Diário.")
 
 
-    # 2. GRÁFICO TOP 5 ITENS VENDIDOS (MÊS)
+    # 2. GRÁFICO TOP 5 ITENS VENDIDOS (MÊS) - Permanece na Coluna B
     if not df_vendas_mes.empty and COLUNA_ITEM_VENDIDO in df_vendas_mes.columns:
-        # Contagem simples de ocorrências na coluna de itens
         top_sabores = df_vendas_mes[COLUNA_ITEM_VENDIDO].value_counts().head(5).reset_index()
         top_sabores.columns = ['Sabor', 'Contagem de Transações']
         
@@ -246,14 +246,12 @@ def adicionar_graficos(df_vendas_mes, df_vendas_dia, df_gastos_mes):
     # 3. GRÁFICO DE LINHA: VENDAS vs. GASTOS (MÊS) - Largura Total
     if not df_vendas_mes.empty or not df_gastos_mes.empty:
         
-        # Agregando por data
         vendas_diarias = df_vendas_mes.groupby('Data')['Total Limpo'].sum().reset_index()
         vendas_diarias.rename(columns={'Total Limpo': 'Vendas'}, inplace=True)
         
         gastos_diarios = df_gastos_mes.groupby('Data')['Total Limpo'].sum().reset_index()
         gastos_diarios.rename(columns={'Total Limpo': 'Gastos'}, inplace=True)
         
-        # União e formatação longa
         df_unificado = pd.merge(vendas_diarias, gastos_diarios, on='Data', how='outer').fillna(0)
         df_longo = df_unificado.melt(
             id_vars='Data', 
@@ -278,10 +276,8 @@ def adicionar_graficos(df_vendas_mes, df_vendas_dia, df_gastos_mes):
 
 
 # --- FUNÇÃO PRINCIPAL DE MONTAGEM DO DASHBOARD STREAMLIT ---
-# AGORA ELA RECEBE OS DF's
 def montar_dashboard(df_vendas_mes, df_vendas_dia, df_gastos_mes, kpis_vendas, kpis_gastos):
     
-    # AJUSTE: Usamos o fuso de Brasília para a hora de atualização
     fuso_brasilia = pytz.timezone('America/Sao_Paulo')
     agora_brasilia = datetime.now(fuso_brasilia)
     hora_atualizacao = agora_brasilia.strftime('%d/%m/%Y %H:%M:%S')
@@ -429,17 +425,14 @@ if __name__ == "__main__":
     with st.spinner('Assando os dados, limpando e unificando Vendas e Gastos...'):
         
         try:
-            # Carrega todos os 5 DataFrames
             df_vendas_mes, df_vendas_dia, df_gastos_mes, df_gastos_dia, df_vendas_anterior = carregar_e_limpar_dados()
             
-            # Condição para exibir o dashboard:
             if not df_vendas_mes.empty or not df_gastos_mes.empty:
                 
-                # 1. Calcula os KPIs (Envia o df_vendas_anterior)
                 kpis_vendas = calcular_kpis_vendas(df_vendas_mes, df_vendas_dia, df_vendas_anterior) 
                 kpis_gastos = calcular_kpis_gastos(df_gastos_mes, df_gastos_dia)
                 
-                # 2. Monta o Dashboard (Passando TUDO, incluindo os DataFrames para os gráficos)
+                # Monta o Dashboard
                 montar_dashboard(df_vendas_mes, df_vendas_dia, df_gastos_mes, kpis_vendas, kpis_gastos)
                 
             else:
