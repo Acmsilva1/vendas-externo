@@ -17,7 +17,7 @@ warnings.filterwarnings('ignore', category=RuntimeWarning)
 # --- CONFIGURAÇÕES FIXAS ---
 # ID da planilha fornecido pelo usuário (dados atuais/vigentes)
 SPREADSHEET_ID_UNIFICADO = "1LuqYrfR8ry_MqCS93Mpj9_7Vu0i9RUTomJU2n69bEug" 
-# ID DA PLANILHA HISTÓRICA DO USUÁRIO (Preenchido com sucesso!)
+# ID DA PLANILHA HISTÓRICA DO USUÁRIO (Apenas para a IA Vidente)
 SPREADSHEET_ID_HISTORICO = "1XWdRbHqY6DWOlSO-oJbBSyOsXmYhM_NEA2_yvWbfq2Y" 
 
 # Abas da planilha (vigente e histórica) - AGORA EM MAIÚSCULAS
@@ -92,7 +92,7 @@ def filtrar_por_mes_e_dia(df, data_foco: date):
     
     return df_mes, df_dia
 
-# --- FUNÇÃO ATUALIZADA PARA CARREGAR HISTÓRICO ---
+# --- FUNÇÃO PRINCIPAL REVERTIDA PARA CARREGAR APENAS DADOS ATUAIS (E RETORNAR O DF COMPLETO DE VENDAS) ---
 def carregar_e_limpar_dados():
     st.set_page_config(layout="wide", page_title="💰 Controle de vendas diário")
     
@@ -101,7 +101,8 @@ def carregar_e_limpar_dados():
     data_atual = agora_brasilia.date()
     data_anterior = data_atual - timedelta(days=1) 
     
-    df_vendas = pd.DataFrame() 
+    # Inicializa DataFrames de retorno
+    df_vendas_atual = pd.DataFrame() # DataFrame completo de vendas do mês vigente (para KPIs e IA)
     df_gastos_mes = pd.DataFrame()
     df_gastos_dia = pd.DataFrame()
     df_vendas_anterior = pd.DataFrame()
@@ -112,46 +113,26 @@ def carregar_e_limpar_dados():
     try:
         # 1. AUTENTICAÇÃO
         gc = gspread.service_account_from_dict(st.secrets["gcp_service_account"])
-        
-        # 2. CARREGAMENTO E LIMPEZA DE VENDAS
+        sh_atual = gc.open_by_key(SPREADSHEET_ID_UNIFICADO)
+
+        # 2. CARREGAMENTO E LIMPEZA DE VENDAS (APENAS PLANILHA ATUAL)
         try:
-            # 2a. Carrega dados do ano/mês vigente (o ID principal)
-            sh_atual = gc.open_by_key(SPREADSHEET_ID_UNIFICADO)
             df_vendas_atual = pd.DataFrame(sh_atual.worksheet(ABA_VENDAS).get_all_records()) 
             
-            # 2b. Tenta carregar dados históricos (para o Prophet)
-            df_vendas_historico = pd.DataFrame()
-            # Verifica se o usuário preencheu o ID Histórico e se é diferente do atual
-            if SPREADSHEET_ID_HISTORICO != SPREADSHEET_ID_UNIFICADO:
-                 try:
-                    sh_hist = gc.open_by_key(SPREADSHEET_ID_HISTORICO)
-                    # Assumimos que a aba de vendas é a mesma
-                    df_vendas_historico = pd.DataFrame(sh_hist.worksheet(ABA_VENDAS).get_all_records()) 
-                    st.success("✅ Histórico de vendas (passado) carregado para a IA.")
-                 except Exception as e:
-                     st.warning(f"⚠️ Planilha histórica não encontrada ou inválida. Usando apenas dados atuais. Detalhe: {e}")
-                     df_vendas_historico = pd.DataFrame()
-            else:
-                 st.warning("⚠️ Planilha Histórica e Atual são as mesmas. O Prophet precisa de dados de longo prazo (meses/anos) para a sazonalidade.")
-                 df_vendas_historico = pd.DataFrame()
-
-            # 2c. Concatena os dados (Histórico + Atual) em um único DF 'mestre'
-            # Remove duplicatas se houver sobreposição (prioriza o mais recente, mas como são DFs separados, apenas concatena)
-            df_vendas = pd.concat([df_vendas_historico, df_vendas_atual], ignore_index=True)
+            # 2a. Processa e limpa o DataFrame ATUAL
+            df_vendas_atual = limpar_coluna_valor(df_vendas_atual, COLUNA_VALOR_VENDA) 
+            df_vendas_atual = processar_data(df_vendas_atual, COLUNA_DATA_HORA)
             
-            # 2d. Processa e limpa o DataFrame UNIFICADO (Total Limpo, Data/Hora, etc.)
-            df_vendas = limpar_coluna_valor(df_vendas, COLUNA_VALOR_VENDA) 
-            df_vendas = processar_data(df_vendas, COLUNA_DATA_HORA)
-            
-            # 2e. Filtra os DataFrames de KPI a partir do UNIFICADO (o filtro de data resolve)
-            df_vendas_mes, df_vendas_dia = filtrar_por_mes_e_dia(df_vendas, data_atual)
-            df_vendas_anterior = df_vendas[df_vendas['Data'] == data_anterior].copy() 
+            # 2b. Filtra os DataFrames de KPI a partir do ATUAL
+            df_vendas_mes, df_vendas_dia = filtrar_por_mes_e_dia(df_vendas_atual, data_atual)
+            df_vendas_anterior = df_vendas_atual[df_vendas_atual['Data'] == data_anterior].copy() 
 
         except ValueError as ve:
+            # Se a aba VENDAS falhar, é um erro crítico para os KPIs
             raise ValueError(f"Erro CRÍTICO na aba VENDAS: {ve}")
 
 
-        # 3. CARREGAMENTO E LIMPEZA DE GASTOS (Apenas da planilha Atual/Vigente)
+        # 3. CARREGAMENTO E LIMPEZA DE GASTOS (APENAS PLANILHA ATUAL)
         try:
             df_gastos = pd.DataFrame(sh_atual.worksheet(ABA_GASTOS).get_all_records())
             df_gastos = limpar_coluna_valor(df_gastos, COLUNA_VALOR_GASTO) 
@@ -174,11 +155,13 @@ def carregar_e_limpar_dados():
         st.error(f"ERRO CRÍTICO DE CONFIGURAÇÃO: {ve}")
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame() 
     except Exception as e:
+        # Erro de conexão/autenticação geral deve ser tratado para mostrar a falha
         st.error(f"ERRO DE CONEXÃO/AUTENTICAÇÃO GERAL: Verifique o ID, abas e Secret. Detalhes: {e}")
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame() 
 
 
-    return df_vendas, df_vendas_mes, df_vendas_dia, df_gastos_mes, df_gastos_dia, df_vendas_anterior, df_gastos_anterior
+    # df_vendas_atual é o novo DF que contém o histórico completo do mês vigente
+    return df_vendas_atual, df_vendas_mes, df_vendas_dia, df_gastos_mes, df_gastos_dia, df_vendas_anterior, df_gastos_anterior
 
 
 # [ ... Funções calcular_kpis_vendas e calcular_kpis_gastos (mantidas) ... ]
@@ -262,18 +245,42 @@ def calcular_kpis_gastos(df_mes, df_dia, df_anterior):
         
     return kpis
 
-# --- FUNÇÃO NOVA: ADICIONA PREVISÃO DE VENDAS COM PROPHET ---
-def adicionar_previsao_vendas(df_vendas_historico):
+# --- FUNÇÃO NOVA: ADICIONA PREVISÃO DE VENDAS COM PROPHET (AGORA ISOLADA) ---
+def adicionar_previsao_vendas(df_vendas_atual):
     """
     Roda um modelo Prophet para prever a quantidade de vendas dos top itens no dia seguinte.
+    A função agora carrega o histórico separadamente e o junta ao df_vendas_atual.
     """
     st.divider()
     st.header("🔮 Puxadinho da IA: Previsão de Demanda para Amanhã")
     
-    # 1. Identificar o item mais vendido (para focar a previsão)
+    # --- 1. CARREGAR E UNIFICAR DADOS HISTÓRICOS (SÓ AQUI DENTRO!) ---
+    df_vendas = df_vendas_atual.copy() # Começa com os dados atuais
+    gc = gspread.service_account_from_dict(st.secrets["gcp_service_account"])
+
+    if SPREADSHEET_ID_HISTORICO != SPREADSHEET_ID_UNIFICADO:
+         try:
+            sh_hist = gc.open_by_key(SPREADSHEET_ID_HISTORICO)
+            df_vendas_historico = pd.DataFrame(sh_hist.worksheet(ABA_VENDAS).get_all_records()) 
+            
+            # Limpeza e Processamento do Histórico antes de concatenar
+            df_vendas_historico = limpar_coluna_valor(df_vendas_historico, COLUNA_VALOR_VENDA) 
+            df_vendas_historico = processar_data(df_vendas_historico, COLUNA_DATA_HORA)
+            
+            # Concatena (Histórico + Atual) - Prioriza o atual em caso de sobreposição (apenas para a IA)
+            df_vendas = pd.concat([df_vendas_historico, df_vendas_atual], ignore_index=True)
+            st.success("✅ Histórico de vendas (passado) carregado e unificado para o Analista Sênior Vidente.")
+         except Exception as e:
+             st.warning(f"⚠️ Planilha histórica não encontrada ou inválida para a IA. Usando apenas dados atuais. Detalhe: {e}")
+             # df_vendas permanece apenas com df_vendas_atual.
+    else:
+         st.caption("⚠️ Planilha Histórica e Atual são as mesmas. A previsão só terá o histórico atual. O Vidente pode estar 'míope'.")
+         
+    # --- 2. PREPARAR DADOS E RODAR O PROPHET ---
+    
     try:
         # Contagem de ocorrências de cada item em todas as transações (histórico completo)
-        itens_contagem = df_vendas_historico[COLUNA_ITEM_VENDIDO].str.split(',').explode().str.strip().value_counts()
+        itens_contagem = df_vendas[COLUNA_ITEM_VENDIDO].str.split(',').explode().str.strip().value_counts()
         
         # Filtra os 3 itens mais vendidos 
         top_itens = itens_contagem.head(3).index.tolist()
@@ -283,8 +290,8 @@ def adicionar_previsao_vendas(df_vendas_historico):
         return
 
     # O Prophet precisa de pelo menos 14 dias para uma sazonalidade semanal confiável
-    if not top_itens or len(df_vendas_historico['Data'].unique()) < 14:
-        st.info("Histórico de dados insuficiente (precisamos de pelo menos 14 dias). Verifique se o ID Histórico está correto!")
+    if not top_itens or len(df_vendas['Data'].unique()) < 14:
+        st.info("Histórico de dados insuficiente (precisamos de pelo menos 14 dias). Alimente a planilha histórica ou a atual por mais tempo!")
         return
 
     st.caption("Projeção baseada na sazonalidade (dia da semana) e tendência. Focando nos Top 3 itens.")
@@ -293,10 +300,9 @@ def adicionar_previsao_vendas(df_vendas_historico):
     
     for i, item in enumerate(top_itens):
         
-        # 2. Preparar dados para o Prophet (ds, y)
-        # Filtra o item e agrupa a contagem por dia
-        df_item = df_vendas_historico[
-            df_vendas_historico[COLUNA_ITEM_VENDIDO].str.contains(item, case=False, na=False)
+        # Preparar dados para o Prophet (ds, y)
+        df_item = df_vendas[
+            df_vendas[COLUNA_ITEM_VENDIDO].str.contains(item, case=False, na=False)
         ].copy()
         
         # Agrupar por dia (ds) e contar a ocorrência (y)
@@ -517,7 +523,7 @@ def adicionar_graficos(df_vendas_mes, df_vendas_dia, df_gastos_mes):
 
 
 # --- FUNÇÃO PRINCIPAL DE MONTAGEM DO DASHBOARD STREAMLIT ---
-def montar_dashboard(df_vendas, df_vendas_mes, df_vendas_dia, df_gastos_mes, kpis_vendas, kpis_gastos):
+def montar_dashboard(df_vendas_atual, df_vendas_mes, df_vendas_dia, df_gastos_mes, kpis_vendas, kpis_gastos):
     
     fuso_brasilia = pytz.timezone('America/Sao_Paulo')
     agora_brasilia = datetime.now(fuso_brasilia)
@@ -676,7 +682,8 @@ def montar_dashboard(df_vendas, df_vendas_mes, df_vendas_dia, df_gastos_mes, kpi
     adicionar_graficos(df_vendas_mes, df_vendas_dia, df_gastos_mes)
 
     # --- 5. PUXADINHO DA INTELIGÊNCIA PREDITIVA ---
-    adicionar_previsao_vendas(df_vendas) 
+    # Agora passa o df_vendas_atual e deixa a função carregar o histórico sozinha
+    adicionar_previsao_vendas(df_vendas_atual) 
 
 
 # --- EXECUÇÃO PRINCIPAL STREAMLIT ---
@@ -685,17 +692,19 @@ if __name__ == "__main__":
     with st.spinner('Assando os dados, limpando e unificando Vendas e Gastos... E treinando a IA com a sabedoria do passado...'):
         
         try:
-            # df_vendas é o DataFrame Mestre (Histórico + Atual)
-            df_vendas, df_vendas_mes, df_vendas_dia, df_gastos_mes, df_gastos_dia, df_vendas_anterior, df_gastos_anterior = carregar_e_limpar_dados()
+            # df_vendas_atual é o DataFrame de Vendas do ano/mês vigente
+            df_vendas_atual, df_vendas_mes, df_vendas_dia, df_gastos_mes, df_gastos_dia, df_vendas_anterior, df_gastos_anterior = carregar_e_limpar_dados()
             
             if not df_vendas_mes.empty or not df_gastos_mes.empty:
                 
                 kpis_vendas = calcular_kpis_vendas(df_vendas_mes, df_vendas_dia, df_vendas_anterior) 
                 kpis_gastos = calcular_kpis_gastos(df_gastos_mes, df_gastos_dia, df_gastos_anterior) 
                 
-                montar_dashboard(df_vendas, df_vendas_mes, df_vendas_dia, df_gastos_mes, kpis_vendas, kpis_gastos)
+                # df_vendas_atual é passado para a função de montagem
+                montar_dashboard(df_vendas_atual, df_vendas_mes, df_vendas_dia, df_gastos_mes, kpis_vendas, kpis_gastos)
                 
             else:
+                 # Esta mensagem só aparece se a planilha ATUAL estiver vazia
                  st.info("⚠️ Aguardando dados para análise! O mês parece estar de folga. Adicione Vendas ou Gastos para começar a trabalhar.")
 
         except Exception as e:
