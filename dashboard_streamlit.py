@@ -5,9 +5,16 @@ import streamlit as st
 import time 
 import pytz 
 import plotly.express as px 
+import warnings # NOVO: Para suprimir avisos do Prophet
+# Importação do Prophet
+from prophet import Prophet 
 # NOVAS IMPORTAÇÕES PARA O GRÁFICO DE PRODUTIVIDADE DUAL AXIS
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+
+# Suprimir warnings do Prophet (que são comuns)
+warnings.filterwarnings('ignore', category=FutureWarning)
+warnings.filterwarnings('ignore', category=RuntimeWarning)
 
 # --- CONFIGURAÇÕES FIXAS ---
 # ID da planilha fornecido pelo usuário
@@ -92,12 +99,13 @@ def carregar_e_limpar_dados():
     data_atual = agora_brasilia.date()
     data_anterior = data_atual - timedelta(days=1) 
     
+    df_vendas = pd.DataFrame() # NOVO: Inicializa o DF completo
     df_gastos_mes = pd.DataFrame()
     df_gastos_dia = pd.DataFrame()
     df_vendas_anterior = pd.DataFrame()
     df_vendas_mes = pd.DataFrame()
     df_vendas_dia = pd.DataFrame()
-    df_gastos_anterior = pd.DataFrame() # <--- NOVO: DataFrame para gastos do dia anterior
+    df_gastos_anterior = pd.DataFrame() 
 
     try:
         # 1. AUTENTICAÇÃO
@@ -106,7 +114,7 @@ def carregar_e_limpar_dados():
 
         # 2. CARREGAMENTO E LIMPEZA DE VENDAS
         try:
-            df_vendas = pd.DataFrame(sh.worksheet(ABA_VENDAS).get_all_records())
+            df_vendas = pd.DataFrame(sh.worksheet(ABA_VENDAS).get_all_records()) # Carrega o full DF
             df_vendas = limpar_coluna_valor(df_vendas, COLUNA_VALOR_VENDA) 
             df_vendas = processar_data(df_vendas, COLUNA_DATA_HORA)
             
@@ -123,7 +131,7 @@ def carregar_e_limpar_dados():
             df_gastos = limpar_coluna_valor(df_gastos, COLUNA_VALOR_GASTO) 
             df_gastos = processar_data(df_gastos, COLUNA_DATA_HORA) 
             df_gastos_mes, df_gastos_dia = filtrar_por_mes_e_dia(df_gastos, data_atual)
-            df_gastos_anterior = df_gastos[df_gastos['Data'] == data_anterior].copy() # <--- NOVO: Filtra gastos de ontem
+            df_gastos_anterior = df_gastos[df_gastos['Data'] == data_anterior].copy() 
         except ValueError as ve:
              st.warning(f"⚠️ Sem dados de gasto para análise. Detalhe Técnico: {ve}")
              df_gastos_mes = pd.DataFrame()
@@ -138,13 +146,13 @@ def carregar_e_limpar_dados():
 
     except ValueError as ve:
         st.error(f"ERRO CRÍTICO DE CONFIGURAÇÃO: {ve}")
-        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame() # NOVO: 7 retornos
     except Exception as e:
         st.error(f"ERRO DE CONEXÃO/AUTENTICAÇÃO GERAL: Verifique o ID, abas e Secret. Detalhes: {e}")
-        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame() # NOVO: 7 retornos
 
 
-    return df_vendas_mes, df_vendas_dia, df_gastos_mes, df_gastos_dia, df_vendas_anterior, df_gastos_anterior # <--- NOVO: Retorna gastos de ontem
+    return df_vendas, df_vendas_mes, df_vendas_dia, df_gastos_mes, df_gastos_dia, df_vendas_anterior, df_gastos_anterior # NOVO: Retorna df_vendas
 
 def calcular_kpis_vendas(df_mes, df_dia, df_anterior):
     """Calcula KPIs essenciais de VENDAS para o painel clean, incluindo a comparação com o Dia Anterior."""
@@ -178,7 +186,8 @@ def calcular_kpis_vendas(df_mes, df_dia, df_anterior):
     # INSIGHTS
     if not df_mes.empty and COLUNA_ITEM_VENDIDO in df_mes.columns:
         try:
-             kpis['item_campeao_mes'] = df_mes[COLUNA_ITEM_VENDIDO].mode().iloc[0] 
+             # Modificado para usar o explode para contagem precisa
+             kpis['item_campeao_mes'] = df_mes[COLUNA_ITEM_VENDIDO].str.split(',').explode().str.strip().mode().iloc[0] 
         except IndexError:
              kpis['item_campeao_mes'] = 'Nenhum item vendido em quantidade'
     else:
@@ -202,7 +211,7 @@ def calcular_kpis_vendas(df_mes, df_dia, df_anterior):
 
     return kpis
 
-def calcular_kpis_gastos(df_mes, df_dia, df_anterior): # <--- MODIFICADO: Adiciona df_anterior
+def calcular_kpis_gastos(df_mes, df_dia, df_anterior): 
     """Calcula KPIs essenciais de GASTOS para o painel clean, incluindo a contagem e comparação diária."""
     kpis = {}
     
@@ -211,7 +220,7 @@ def calcular_kpis_gastos(df_mes, df_dia, df_anterior): # <--- MODIFICADO: Adicio
     kpis['total_dia'] = df_dia['Total Limpo'].sum() if not df_dia.empty else 0.0
     kpis['contagem_dia'] = df_dia.shape[0]
 
-    # NOVO: KPI de Gasto do Dia Anterior
+    # KPI de Gasto do Dia Anterior
     kpis['total_anterior'] = df_anterior['Total Limpo'].sum() if not df_anterior.empty else 0.0
     kpis['contagem_anterior'] = df_anterior.shape[0]
 
@@ -224,8 +233,82 @@ def calcular_kpis_gastos(df_mes, df_dia, df_anterior): # <--- MODIFICADO: Adicio
         kpis['gasto_principal_valor'] = 0.0
         
     return kpis
+
+# --- FUNÇÃO NOVA: ADICIONA PREVISÃO DE VENDAS COM PROPHET ---
+def adicionar_previsao_vendas(df_vendas_historico):
+    """
+    Roda um modelo Prophet para prever a quantidade de vendas dos top itens no dia seguinte.
+    """
+    st.divider()
+    st.header("🔮 Puxadinho da IA: Previsão de Demanda para Amanhã")
     
-# --- FUNÇÃO ATUALIZADA: ADICIONA GRÁFICOS INTERATIVOS (ADICIONADO VENDAS POR DIA DA SEMANA) ---
+    # 1. Identificar o item mais vendido (para focar a previsão)
+    try:
+        # Contagem de ocorrências de cada item em todas as transações (histórico completo)
+        itens_contagem = df_vendas_historico[COLUNA_ITEM_VENDIDO].str.split(',').explode().str.strip().value_counts()
+        
+        # Filtra os 3 itens mais vendidos 
+        top_itens = itens_contagem.head(3).index.tolist()
+        
+    except Exception:
+        st.info("Não foi possível identificar itens vendidos no histórico para iniciar a previsão.")
+        return
+
+    # O Prophet precisa de pelo menos 14 dias para uma sazonalidade semanal confiável
+    if not top_itens or len(df_vendas_historico['Data'].unique()) < 14:
+        st.info("Histórico de dados insuficiente (precisamos de pelo menos 14 dias) ou item vendido não encontrado para previsão. Comece a registrar suas vendas!")
+        return
+
+    st.caption("Projeção baseada na sazonalidade (dia da semana) e tendência. Focando nos Top 3 itens.")
+    
+    cols = st.columns(3)
+    
+    for i, item in enumerate(top_itens):
+        
+        # 2. Preparar dados para o Prophet (ds, y)
+        # Filtra o item e agrupa a contagem por dia
+        df_item = df_vendas_historico[
+            df_vendas_historico[COLUNA_ITEM_VENDIDO].str.contains(item, case=False, na=False)
+        ].copy()
+        
+        # Agrupar por dia (ds) e contar a ocorrência (y)
+        df_item_daily = df_item.groupby('Data').size().reset_index(name='y')
+        
+        # Formato Prophet
+        df_item_daily['ds'] = pd.to_datetime(df_item_daily['Data'])
+        df_item_prophet = df_item_daily[['ds', 'y']]
+        
+        # 3. Treinar e Prever
+        if len(df_item_prophet) < 7: 
+             cols[i].warning(f"Ainda sem histórico semanal para prever **{item}**.")
+             continue
+             
+        try:
+            m = Prophet()
+            m.fit(df_item_prophet)
+            
+            # Previsão para 1 período (o próximo dia)
+            future = m.make_future_dataframe(periods=1, include_history=False) 
+            forecast = m.predict(future)
+            
+            previsao_unidades = max(0, forecast.iloc[0]['yhat']) # Não aceita previsão negativa
+            
+            data_previsao_obj = future.iloc[0]['ds'].date()
+            data_previsao_str = data_previsao_obj.strftime('%d/%m')
+            
+            # 4. Exibir no Streamlit
+            cols[i].metric(
+                label=f"Demanda Estimada - {item}",
+                value=f"{previsao_unidades:.0f} Unidades",
+                delta=f"Para {data_previsao_str} ({DIA_SEMANA_MAP[data_previsao_obj.weekday()]})", 
+                delta_color="off",
+                help=f"Projeção de demanda para o item '{item}' com base no histórico diário e semanal."
+            )
+            
+        except Exception as e:
+            cols[i].error(f"Erro ao prever {item}. Detalhes: {e}")
+
+# --- FUNÇÃO ATUALIZADA: ADICIONA GRÁFICOS INTERATIVOS ---
 def adicionar_graficos(df_vendas_mes, df_vendas_dia, df_gastos_mes):
 
     st.divider()
@@ -303,7 +386,8 @@ def adicionar_graficos(df_vendas_mes, df_vendas_dia, df_gastos_mes):
 
     # 2.1 GRÁFICO TOP 5 ITENS VENDIDOS (MÊS) - FOCO EM PRODUTO
     if not df_vendas_mes.empty and COLUNA_ITEM_VENDIDO in df_vendas_mes.columns:
-        top_sabores = df_vendas_mes[COLUNA_ITEM_VENDIDO].value_counts().head(5).reset_index()
+        # Usa explode e value_counts para contagem precisa de itens
+        top_sabores = df_vendas_mes[COLUNA_ITEM_VENDIDO].str.split(',').explode().str.strip().value_counts().head(5).reset_index()
         top_sabores.columns = ['Sabor', 'Contagem de Transações']
         
         top_sabores['Legenda'] = top_sabores['Sabor'] + ' (' + top_sabores['Contagem de Transações'].astype(str) + ' unid.)'
@@ -377,7 +461,7 @@ def adicionar_graficos(df_vendas_mes, df_vendas_dia, df_gastos_mes):
         df_vendas_mes['Dia_Semana_Num'] = df_vendas_mes['Data/Hora'].dt.dayofweek
         
         # 2. Mapear para nome em Português
-        df_vendas_mes['Dia_Semana'] = df_vendas_mes['Dia_Semana_Num'].map(DIA_SEMANA_MAP)
+        df_vendas_mes['Dia_Semana'] = df_vendas_mes['Data/Hora'].dt.dayofweek.map(DIA_SEMANA_MAP) 
         
         # 3. Agrupar e Somar o valor total vendido
         vendas_por_dia = df_vendas_mes.groupby(['Dia_Semana_Num', 'Dia_Semana'])['Total Limpo'].sum().reset_index()
@@ -405,7 +489,8 @@ def adicionar_graficos(df_vendas_mes, df_vendas_dia, df_gastos_mes):
 
 
 # --- FUNÇÃO PRINCIPAL DE MONTAGEM DO DASHBOARD STREAMLIT ---
-def montar_dashboard(df_vendas_mes, df_vendas_dia, df_gastos_mes, kpis_vendas, kpis_gastos):
+# NOVO: Adiciona df_vendas (histórico completo)
+def montar_dashboard(df_vendas, df_vendas_mes, df_vendas_dia, df_gastos_mes, kpis_vendas, kpis_gastos):
     
     fuso_brasilia = pytz.timezone('America/Sao_Paulo')
     agora_brasilia = datetime.now(fuso_brasilia)
@@ -431,8 +516,7 @@ def montar_dashboard(df_vendas_mes, df_vendas_dia, df_gastos_mes, kpis_vendas, k
     transacoes_mes = df_vendas_mes.shape[0] if not df_vendas_mes.empty else 0
     ticket_medio = total_vendas_mes / transacoes_mes if transacoes_mes > 0 else 0.0
     
-    # A variável 'cor_resultado' foi removida e substituída por "off" no metric abaixo.
-    # cor_resultado = "normal" if resultado_liquido >= 0 else "inverse" 
+    cor_resultado = "normal" if resultado_liquido >= 0 else "inverse" 
 
     col_res_a, col_res_b, col_res_c = st.columns([2, 1, 1])
     
@@ -440,7 +524,7 @@ def montar_dashboard(df_vendas_mes, df_vendas_dia, df_gastos_mes, kpis_vendas, k
         label="LUCRO / PREJUÍZO (MÊS)", 
         value=format_brl(resultado_liquido),
         delta=f"Vendas: {format_brl(total_vendas_mes)} | Gastos: {format_brl(total_gastos_mes)}",
-        delta_color="off" # <--- Desativa a cor aqui
+        delta_color=cor_resultado
     )
     
     col_res_b.metric(
@@ -462,12 +546,31 @@ def montar_dashboard(df_vendas_mes, df_vendas_dia, df_gastos_mes, kpis_vendas, k
     # --- 2. KPIS DE VENDAS E GASTOS (LINHA PRINCIPAL) ---
     st.header("💰 Vendas x Despesas (Valores e Quantidades)")
     
-    # Estas variáveis são floats/ints e serão usadas no parâmetro delta
+    # Variáveis numéricas para a diferença
     diferenca_valor = kpis_vendas['total_dia'] - kpis_vendas['total_anterior']
     diferenca_itens = kpis_vendas['contagem_dia'] - kpis_vendas['contagem_anterior'] 
-    diferenca_gasto_valor = kpis_gastos['total_dia'] - kpis_gastos['total_anterior'] # <--- NOVO: Diferença de Gasto (Hoje vs. Ontem)
+    diferenca_gasto_valor = kpis_gastos['total_dia'] - kpis_gastos['total_anterior'] 
     
     cor_neutra = "off" 
+    
+    # Lógica para evitar seta ↑ em Delta zero (Vendas - Valor)
+    if diferenca_valor == 0:
+        delta_venda_valor = "Estável"
+    else:
+        delta_venda_valor = diferenca_valor
+
+    # Lógica para evitar seta ↑ em Delta zero (Vendas - Itens)
+    if diferenca_itens == 0:
+        delta_venda_itens = "Estável"
+    else:
+        delta_venda_itens = diferenca_itens
+        
+    # Lógica para evitar seta ↑ em Delta zero (Gastos - Valor)
+    if diferenca_gasto_valor == 0:
+        delta_gasto_valor = "Estável"
+    else:
+        delta_gasto_valor = diferenca_gasto_valor
+
     
     col1, col_comp_valor, col_comp_und, col2, col3, col4 = st.columns([1, 1, 1, 1, 1, 1]) 
     
@@ -481,7 +584,7 @@ def montar_dashboard(df_vendas_mes, df_vendas_dia, df_gastos_mes, kpis_vendas, k
     col_comp_valor.metric(
         label="R$ DIF. (HOJE vs. ONTEM)",
         value=format_brl(diferenca_valor),
-        delta=diferenca_valor, # <--- Usa o valor float/int para definir a seta.
+        delta=delta_venda_valor, 
         delta_color=cor_neutra, 
         help=f"Comparação com o total de R$ {kpis_vendas['total_anterior']:,.2f} vendido ontem."
     )
@@ -489,7 +592,7 @@ def montar_dashboard(df_vendas_mes, df_vendas_dia, df_gastos_mes, kpis_vendas, k
     col_comp_und.metric(
         label="ITENS DIF. (HOJE vs. ONTEM)", 
         value=f"{diferenca_itens:.0f} itens",
-        delta=diferenca_itens, # <--- Usa o valor float/int para definir a seta.
+        delta=delta_venda_itens, 
         delta_color=cor_neutra, 
         help=f"Variação no número de ITENS vendidos. Ontem: {kpis_vendas['contagem_anterior']:.0f} itens."
     )
@@ -502,11 +605,11 @@ def montar_dashboard(df_vendas_mes, df_vendas_dia, df_gastos_mes, kpis_vendas, k
     )
     
     col3.metric(
-        label="R$ GASTOS HOJE (vs. Ontem)", # <--- Label Alterado para clareza
+        label="R$ GASTOS HOJE (vs. Ontem)", 
         value=format_brl(kpis_gastos['total_dia']),
-        delta=diferenca_gasto_valor, # <--- MODIFICADO: Delta numérico para seta correta
+        delta=delta_gasto_valor, 
         delta_color=cor_neutra, 
-        help=f"Comparação com o total de R$ {kpis_gastos['total_anterior']:,.2f} gasto ontem." # <--- Help atualizado
+        help=f"Comparação com o total de R$ {kpis_gastos['total_anterior']:,.2f} gasto ontem."
     )
     
     col4.metric(
@@ -545,23 +648,30 @@ def montar_dashboard(df_vendas_mes, df_vendas_dia, df_gastos_mes, kpis_vendas, k
     # --- 4. GRÁFICOS (CHAMADA DA FUNÇÃO) ---
     adicionar_graficos(df_vendas_mes, df_vendas_dia, df_gastos_mes)
 
+    # --- 5. PUXADINHO DA INTELIGÊNCIA PREDITIVA ---
+    # NOVO: Passa o dataframe completo para ter todo o histórico
+    adicionar_previsao_vendas(df_vendas) 
+
 
 # --- EXECUÇÃO PRINCIPAL STREAMLIT ---
 if __name__ == "__main__":
     
-    with st.spinner('Assando os dados, limpando e unificando Vendas e Gastos...'):
+    # OBS: O Prophet requer que a biblioteca "prophet" seja instalada (e possivelmente pystan)
+    # Exemplo: pip install prophet
+    
+    with st.spinner('Assando os dados, limpando e unificando Vendas e Gastos... E treinando a IA...'):
         
         try:
-            # MODIFICADO: Adiciona df_gastos_anterior ao unpack
-            df_vendas_mes, df_vendas_dia, df_gastos_mes, df_gastos_dia, df_vendas_anterior, df_gastos_anterior = carregar_e_limpar_dados()
+            # NOVO: Unpack de 7 DataFrames, incluindo df_vendas completo
+            df_vendas, df_vendas_mes, df_vendas_dia, df_gastos_mes, df_gastos_dia, df_vendas_anterior, df_gastos_anterior = carregar_e_limpar_dados()
             
             if not df_vendas_mes.empty or not df_gastos_mes.empty:
                 
                 kpis_vendas = calcular_kpis_vendas(df_vendas_mes, df_vendas_dia, df_vendas_anterior) 
-                # MODIFICADO: Passa df_gastos_anterior para a função de cálculo
-                kpis_gastos = calcular_kpis_gastos(df_gastos_mes, df_gastos_dia, df_gastos_anterior)
+                kpis_gastos = calcular_kpis_gastos(df_gastos_mes, df_gastos_dia, df_gastos_anterior) 
                 
-                montar_dashboard(df_vendas_mes, df_vendas_dia, df_gastos_mes, kpis_vendas, kpis_gastos)
+                # NOVO: Passa df_vendas para a montagem do dashboard
+                montar_dashboard(df_vendas, df_vendas_mes, df_vendas_dia, df_gastos_mes, kpis_vendas, kpis_gastos)
                 
             else:
                  st.info("⚠️ Aguardando dados para análise! O mês parece estar de folga. Adicione Vendas ou Gastos para começar a trabalhar.")
