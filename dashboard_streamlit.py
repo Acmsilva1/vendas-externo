@@ -97,7 +97,7 @@ def carregar_e_limpar_dados():
     df_vendas_anterior = pd.DataFrame()
     df_vendas_mes = pd.DataFrame()
     df_vendas_dia = pd.DataFrame()
-    df_gastos_anterior = pd.DataFrame() # Adicionado para gastos do dia anterior
+    df_gastos_anterior = pd.DataFrame() # <--- NOVO: DataFrame para gastos do dia anterior
 
     try:
         # 1. AUTENTICAÇÃO
@@ -123,7 +123,7 @@ def carregar_e_limpar_dados():
             df_gastos = limpar_coluna_valor(df_gastos, COLUNA_VALOR_GASTO) 
             df_gastos = processar_data(df_gastos, COLUNA_DATA_HORA) 
             df_gastos_mes, df_gastos_dia = filtrar_por_mes_e_dia(df_gastos, data_atual)
-            df_gastos_anterior = df_gastos[df_gastos['Data'] == data_anterior].copy() # Filtra gastos de ontem
+            df_gastos_anterior = df_gastos[df_gastos['Data'] == data_anterior].copy() # <--- NOVO: Filtra gastos de ontem
         except ValueError as ve:
              st.warning(f"⚠️ Sem dados de gasto para análise. Detalhe Técnico: {ve}")
              df_gastos_mes = pd.DataFrame()
@@ -138,15 +138,13 @@ def carregar_e_limpar_dados():
 
     except ValueError as ve:
         st.error(f"ERRO CRÍTICO DE CONFIGURAÇÃO: {ve}")
-        # Retorno ajustado para 6 DFs
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
     except Exception as e:
         st.error(f"ERRO DE CONEXÃO/AUTENTICAÇÃO GERAL: Verifique o ID, abas e Secret. Detalhes: {e}")
-        # Retorno ajustado para 6 DFs
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
 
-    return df_vendas_mes, df_vendas_dia, df_gastos_mes, df_gastos_dia, df_vendas_anterior, df_gastos_anterior
+    return df_vendas_mes, df_vendas_dia, df_gastos_mes, df_gastos_dia, df_vendas_anterior, df_gastos_anterior # <--- NOVO: Retorna gastos de ontem
 
 def calcular_kpis_vendas(df_mes, df_dia, df_anterior):
     """Calcula KPIs essenciais de VENDAS para o painel clean, incluindo a comparação com o Dia Anterior."""
@@ -204,7 +202,7 @@ def calcular_kpis_vendas(df_mes, df_dia, df_anterior):
 
     return kpis
 
-def calcular_kpis_gastos(df_mes, df_dia, df_anterior): # Adicionado df_anterior
+def calcular_kpis_gastos(df_mes, df_dia, df_anterior): # <--- MODIFICADO: Adiciona df_anterior
     """Calcula KPIs essenciais de GASTOS para o painel clean, incluindo a contagem e comparação diária."""
     kpis = {}
     
@@ -379,7 +377,7 @@ def adicionar_graficos(df_vendas_mes, df_vendas_dia, df_gastos_mes):
         df_vendas_mes['Dia_Semana_Num'] = df_vendas_mes['Data/Hora'].dt.dayofweek
         
         # 2. Mapear para nome em Português
-        df_vendas_mes['Dia_Semana'] = df_vendas_mes['Data/Hora'].dt.dayofweek.map(DIA_SEMANA_MAP) # Correção aqui
+        df_vendas_mes['Dia_Semana'] = df_vendas_mes['Dia_Semana_Num'].map(DIA_SEMANA_MAP)
         
         # 3. Agrupar e Somar o valor total vendido
         vendas_por_dia = df_vendas_mes.groupby(['Dia_Semana_Num', 'Dia_Semana'])['Total Limpo'].sum().reset_index()
@@ -433,7 +431,8 @@ def montar_dashboard(df_vendas_mes, df_vendas_dia, df_gastos_mes, kpis_vendas, k
     transacoes_mes = df_vendas_mes.shape[0] if not df_vendas_mes.empty else 0
     ticket_medio = total_vendas_mes / transacoes_mes if transacoes_mes > 0 else 0.0
     
-    cor_resultado = "normal" if resultado_liquido >= 0 else "inverse" 
+    # A variável 'cor_resultado' foi removida e substituída por "off" no metric abaixo.
+    # cor_resultado = "normal" if resultado_liquido >= 0 else "inverse" 
 
     col_res_a, col_res_b, col_res_c = st.columns([2, 1, 1])
     
@@ -441,7 +440,7 @@ def montar_dashboard(df_vendas_mes, df_vendas_dia, df_gastos_mes, kpis_vendas, k
         label="LUCRO / PREJUÍZO (MÊS)", 
         value=format_brl(resultado_liquido),
         delta=f"Vendas: {format_brl(total_vendas_mes)} | Gastos: {format_brl(total_gastos_mes)}",
-        delta_color=cor_resultado
+        delta_color="off" # <--- Desativa a cor aqui
     )
     
     col_res_b.metric(
@@ -463,33 +462,12 @@ def montar_dashboard(df_vendas_mes, df_vendas_dia, df_gastos_mes, kpis_vendas, k
     # --- 2. KPIS DE VENDAS E GASTOS (LINHA PRINCIPAL) ---
     st.header("💰 Vendas x Despesas (Valores e Quantidades)")
     
-    # Variáveis numéricas para a diferença
+    # Estas variáveis são floats/ints e serão usadas no parâmetro delta
     diferenca_valor = kpis_vendas['total_dia'] - kpis_vendas['total_anterior']
     diferenca_itens = kpis_vendas['contagem_dia'] - kpis_vendas['contagem_anterior'] 
-    diferenca_gasto_valor = kpis_gastos['total_dia'] - kpis_gastos['total_anterior'] 
+    diferenca_gasto_valor = kpis_gastos['total_dia'] - kpis_gastos['total_anterior'] # <--- NOVO: Diferença de Gasto (Hoje vs. Ontem)
     
     cor_neutra = "off" 
-    
-    # Lógica para evitar seta ↑ em Delta zero (Vendas - Valor) <--- CORREÇÃO APLICADA
-    if diferenca_valor == 0:
-        delta_venda_valor = "Estável"
-    else:
-        # Usa o valor numérico para que o Streamlit defina a seta corretamente
-        delta_venda_valor = diferenca_valor
-
-    # Lógica para evitar seta ↑ em Delta zero (Vendas - Itens) <--- CORREÇÃO APLICADA
-    if diferenca_itens == 0:
-        delta_venda_itens = "Estável"
-    else:
-        # Usa o valor numérico para que o Streamlit defina a seta corretamente
-        delta_venda_itens = diferenca_itens
-        
-    # Lógica para evitar seta ↑ em Delta zero (Gastos - Valor)
-    if diferenca_gasto_valor == 0:
-        delta_gasto_valor = "Estável"
-    else:
-        delta_gasto_valor = diferenca_gasto_valor
-
     
     col1, col_comp_valor, col_comp_und, col2, col3, col4 = st.columns([1, 1, 1, 1, 1, 1]) 
     
@@ -503,7 +481,7 @@ def montar_dashboard(df_vendas_mes, df_vendas_dia, df_gastos_mes, kpis_vendas, k
     col_comp_valor.metric(
         label="R$ DIF. (HOJE vs. ONTEM)",
         value=format_brl(diferenca_valor),
-        delta=delta_venda_valor, # <--- Usa a string "Estável" ou o float/int
+        delta=diferenca_valor, # <--- Usa o valor float/int para definir a seta.
         delta_color=cor_neutra, 
         help=f"Comparação com o total de R$ {kpis_vendas['total_anterior']:,.2f} vendido ontem."
     )
@@ -511,7 +489,7 @@ def montar_dashboard(df_vendas_mes, df_vendas_dia, df_gastos_mes, kpis_vendas, k
     col_comp_und.metric(
         label="ITENS DIF. (HOJE vs. ONTEM)", 
         value=f"{diferenca_itens:.0f} itens",
-        delta=delta_venda_itens, # <--- Usa a string "Estável" ou o float/int
+        delta=diferenca_itens, # <--- Usa o valor float/int para definir a seta.
         delta_color=cor_neutra, 
         help=f"Variação no número de ITENS vendidos. Ontem: {kpis_vendas['contagem_anterior']:.0f} itens."
     )
@@ -524,11 +502,11 @@ def montar_dashboard(df_vendas_mes, df_vendas_dia, df_gastos_mes, kpis_vendas, k
     )
     
     col3.metric(
-        label="R$ GASTOS HOJE (vs. Ontem)", # Título atualizado
+        label="R$ GASTOS HOJE (vs. Ontem)", # <--- Label Alterado para clareza
         value=format_brl(kpis_gastos['total_dia']),
-        delta=delta_gasto_valor, # <--- Usa a string "Estável" ou o float/int
+        delta=diferenca_gasto_valor, # <--- MODIFICADO: Delta numérico para seta correta
         delta_color=cor_neutra, 
-        help=f"Comparação com o total de R$ {kpis_gastos['total_anterior']:,.2f} gasto ontem."
+        help=f"Comparação com o total de R$ {kpis_gastos['total_anterior']:,.2f} gasto ontem." # <--- Help atualizado
     )
     
     col4.metric(
@@ -574,14 +552,14 @@ if __name__ == "__main__":
     with st.spinner('Assando os dados, limpando e unificando Vendas e Gastos...'):
         
         try:
-            # RETORNO AJUSTADO: 6 DataFrames
+            # MODIFICADO: Adiciona df_gastos_anterior ao unpack
             df_vendas_mes, df_vendas_dia, df_gastos_mes, df_gastos_dia, df_vendas_anterior, df_gastos_anterior = carregar_e_limpar_dados()
             
             if not df_vendas_mes.empty or not df_gastos_mes.empty:
                 
                 kpis_vendas = calcular_kpis_vendas(df_vendas_mes, df_vendas_dia, df_vendas_anterior) 
-                # CHAMADA AJUSTADA: Passa df_gastos_anterior
-                kpis_gastos = calcular_kpis_gastos(df_gastos_mes, df_gastos_dia, df_gastos_anterior) 
+                # MODIFICADO: Passa df_gastos_anterior para a função de cálculo
+                kpis_gastos = calcular_kpis_gastos(df_gastos_mes, df_gastos_dia, df_gastos_anterior)
                 
                 montar_dashboard(df_vendas_mes, df_vendas_dia, df_gastos_mes, kpis_vendas, kpis_gastos)
                 
