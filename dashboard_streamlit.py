@@ -423,7 +423,8 @@ def montar_dashboard(df_vendas_mes, df_vendas_dia, df_gastos_mes, kpis_vendas, k
     transacoes_mes = df_vendas_mes.shape[0] if not df_vendas_mes.empty else 0
     ticket_medio = total_vendas_mes / transacoes_mes if transacoes_mes > 0 else 0.0
     
-    cor_resultado = "normal" if resultado_liquido >= 0 else "inverse" 
+    # A variável 'cor_resultado' foi removida e substituída por "off" no metric abaixo.
+    # cor_resultado = "normal" if resultado_liquido >= 0 else "inverse" 
 
     col_res_a, col_res_b, col_res_c = st.columns([2, 1, 1])
     
@@ -431,7 +432,7 @@ def montar_dashboard(df_vendas_mes, df_vendas_dia, df_gastos_mes, kpis_vendas, k
         label="LUCRO / PREJUÍZO (MÊS)", 
         value=format_brl(resultado_liquido),
         delta=f"Vendas: {format_brl(total_vendas_mes)} | Gastos: {format_brl(total_gastos_mes)}",
-        delta_color=cor_resultado
+        delta_color="off" # <--- CORREÇÃO: Desativa a cor verde/vermelha aqui
     )
     
     col_res_b.metric(
@@ -453,6 +454,7 @@ def montar_dashboard(df_vendas_mes, df_vendas_dia, df_gastos_mes, kpis_vendas, k
     # --- 2. KPIS DE VENDAS E GASTOS (LINHA PRINCIPAL) ---
     st.header("💰 Vendas x Despesas (Valores e Quantidades)")
     
+    # Estas variáveis são floats/ints e serão usadas no parâmetro delta
     diferenca_valor = kpis_vendas['total_dia'] - kpis_vendas['total_anterior']
     diferenca_itens = kpis_vendas['contagem_dia'] - kpis_vendas['contagem_anterior'] 
     
@@ -467,20 +469,20 @@ def montar_dashboard(df_vendas_mes, df_vendas_dia, df_gastos_mes, kpis_vendas, k
         delta_color="off" 
     )
     
-    # CORREÇÃO APLICADA AQUI: delta recebe o valor numérico (float)
+    # CORREÇÃO APLICADA: Passa o valor NUMÉRICO para delta
     col_comp_valor.metric(
         label="R$ DIF. (HOJE vs. ONTEM)",
         value=format_brl(diferenca_valor),
-        delta=diferenca_valor, # <--- Corrigido para passar o float/int.
+        delta=diferenca_valor, # <--- Usa o valor float/int para definir a seta.
         delta_color=cor_neutra, 
         help=f"Comparação com o total de R$ {kpis_vendas['total_anterior']:,.2f} vendido ontem."
     )
 
-    # CORREÇÃO APLICADA AQUI: delta recebe o valor numérico (float/int)
+    # CORREÇÃO APLICADA: Passa o valor NUMÉRICO para delta
     col_comp_und.metric(
         label="ITENS DIF. (HOJE vs. ONTEM)", 
         value=f"{diferenca_itens:.0f} itens",
-        delta=diferenca_itens, # <--- Corrigido para passar o float/int.
+        delta=diferenca_itens, # <--- Usa o valor float/int para definir a seta.
         delta_color=cor_neutra, 
         help=f"Variação no número de ITENS vendidos. Ontem: {kpis_vendas['contagem_anterior']:.0f} itens."
     )
