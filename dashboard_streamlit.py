@@ -1,6 +1,6 @@
 import pandas as pd
 import gspread
-from datetime import datetime, date, timedelta 
+from datetime import datetime, date, timedelta
 import streamlit as st 
 import time 
 import pytz 
@@ -44,7 +44,9 @@ def limpar_coluna_valor(df, coluna_original, coluna_limpa='Total Limpo'):
         .astype(str)
         .str.replace('R$', '', regex=False)
         .str.replace('.', '', regex=False)
-        .str.replace(',', '.', regex=False) 
+        .str.replace(',', '.', regex=False)
+        .str.replace('R$', '', regex=False)
+        .str.replace(',', '.', regex=False)
         .str.strip()
     )
     df[coluna_limpa] = pd.to_numeric(df[coluna_limpa], errors='coerce')
@@ -75,7 +77,7 @@ def filtrar_por_mes_e_dia(df, data_foco: date):
     
     return df_mes, df_dia
 
-@st.cache_data(ttl=300) # Cache de 5 minutos
+# A remoção do cache (@st.cache_data) foi mantida para recarga imediata
 def carregar_e_limpar_dados():
     st.set_page_config(layout="wide", page_title="💰 Controle de vendas diário")
     
@@ -84,7 +86,11 @@ def carregar_e_limpar_dados():
     data_atual = agora_brasilia.date()
     data_anterior = data_atual - timedelta(days=1) 
     
-    df_vendas_mes, df_vendas_dia, df_gastos_mes, df_gastos_dia, df_vendas_anterior = [pd.DataFrame() for _ in range(5)]
+    df_gastos_mes = pd.DataFrame()
+    df_gastos_dia = pd.DataFrame()
+    df_vendas_anterior = pd.DataFrame()
+    df_vendas_mes = pd.DataFrame()
+    df_vendas_dia = pd.DataFrame()
 
     try:
         # 1. AUTENTICAÇÃO
@@ -122,10 +128,10 @@ def carregar_e_limpar_dados():
 
     except ValueError as ve:
         st.error(f"ERRO CRÍTICO DE CONFIGURAÇÃO: {ve}")
-        return [pd.DataFrame()] * 5
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
     except Exception as e:
         st.error(f"ERRO DE CONEXÃO/AUTENTICAÇÃO GERAL: Verifique o ID, abas e Secret. Detalhes: {e}")
-        return [pd.DataFrame()] * 5
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
 
     return df_vendas_mes, df_vendas_dia, df_gastos_mes, df_gastos_dia, df_vendas_anterior
@@ -138,7 +144,6 @@ def calcular_kpis_vendas(df_mes, df_dia, df_anterior):
         def contar_itens(df):
             if df.empty or COLUNA_ITEM_VENDIDO not in df.columns:
                  return 0
-            # Conta a quantidade de itens vendidos (separa por vírgula)
             contagens = df[COLUNA_ITEM_VENDIDO].fillna('').astype(str).str.split(',').apply(len)
             return contagens.sum()
 
@@ -146,7 +151,7 @@ def calcular_kpis_vendas(df_mes, df_dia, df_anterior):
         kpis['contagem_dia'] = contar_itens(df_dia)
         kpis['contagem_anterior'] = contar_itens(df_anterior)
 
-    else: # Fallback se não houver coluna de itens
+    else: 
         kpis['contagem_mes'] = df_mes.shape[0]
         kpis['contagem_dia'] = df_dia.shape[0]
         kpis['contagem_anterior'] = df_anterior.shape[0]
@@ -156,11 +161,11 @@ def calcular_kpis_vendas(df_mes, df_dia, df_anterior):
     kpis['total_dia'] = df_dia['Total Limpo'].sum() if not df_dia.empty else 0.0
     kpis['total_anterior'] = df_anterior['Total Limpo'].sum() if not df_anterior.empty else 0.0
     
-    # NOVO KPI: TICKET MÉDIO
-    kpis['transacoes_mes'] = df_mes.shape[0] if not df_mes.empty else 0 # Número de linhas
+    # NOVOS KPIS
+    kpis['transacoes_mes'] = df_mes.shape[0] if not df_mes.empty else 0 
     kpis['ticket_medio_mes'] = kpis['total_mes'] / kpis['transacoes_mes'] if kpis['transacoes_mes'] > 0 else 0.0
 
-    # KPIs de Insights
+    # INSIGHTS
     if not df_mes.empty and COLUNA_ITEM_VENDIDO in df_mes.columns:
         try:
              kpis['item_campeao_mes'] = df_mes[COLUNA_ITEM_VENDIDO].mode().iloc[0] 
@@ -237,38 +242,38 @@ def adicionar_graficos(df_vendas_mes, df_vendas_dia, df_gastos_mes):
 
         fig_unificado = make_subplots(specs=[[{"secondary_y": True}]])
 
-        # BARRA 1: VALOR DE VENDAS (POSITIVO) - Eixo Y Primário (Valor R$)
+        # BARRA 1: VALOR DE VENDAS (POSITIVO)
         fig_unificado.add_trace(
             go.Bar(
                 x=df_unificado['Data'], 
                 y=df_unificado['Valor'], 
                 name='R$ Vendas',
-                marker_color='#4CAF50', # Verde
+                marker_color='#4CAF50', 
                 hovertemplate="<b>Vendas:</b> %{y:$.2f}<br>" 
             ),
             secondary_y=False,
         )
 
-        # BARRA 2: CUSTO (NEGATIVO) - Eixo Y Primário (Valor R$)
+        # BARRA 2: CUSTO (NEGATIVO)
         fig_unificado.add_trace(
             go.Bar(
                 x=df_unificado['Data'], 
                 y=df_unificado['Custo Negativo'], 
                 name='R$ Custos',
-                marker_color='#F44336', # Vermelho
+                marker_color='#F44336', 
                 hovertemplate="<b>Custos:</b> R$ %{y:,.2f}<br>" 
             ),
             secondary_y=False,
         )
         
-        # LINHA: QUANTIDADE VENDIDA (Eixo Y Secundário - Direita)
+        # LINHA: QUANTIDADE VENDIDA 
         fig_unificado.add_trace(
             go.Scatter(
                 x=df_unificado['Data'], 
                 y=df_unificado['Quantidade_Itens'], 
                 mode='lines+markers',
                 name='Nº Itens Vendidos',
-                line=dict(color='#FFC107', width=3), # Amarelo/Dourado
+                line=dict(color='#FFC107', width=3), 
                 hovertemplate="<b>Itens Vendidos:</b> %{y}"
             ),
             secondary_y=True,
@@ -312,25 +317,28 @@ def adicionar_graficos(df_vendas_mes, df_vendas_dia, df_gastos_mes):
         top_sabores = df_vendas_mes[COLUNA_ITEM_VENDIDO].value_counts().head(5).reset_index()
         top_sabores.columns = ['Sabor', 'Contagem de Transações']
         
+        # MUDANÇA APLICADA AQUI: Adiciona a contagem na legenda
+        top_sabores['Legenda'] = top_sabores['Sabor'] + ' (' + top_sabores['Contagem de Transações'].astype(str) + ' unid.)'
+        
         fig_top = px.pie(
             top_sabores, 
             values='Contagem de Transações', 
-            names='Sabor', 
+            names='Legenda', # Agora usa a Legenda formatada
             title='Top 5 Itens Mais Vendidos (Contagem)',
             hole=.3 
         )
+        fig_top.update_traces(hovertemplate="Sabor: %{label}<br>Contagem: %{value}<br>Percentual: %{percent}")
+        
         col_grafico_b.plotly_chart(fig_top, use_container_width=True)
     else:
         col_grafico_b.info("Sem dados de itens vendidos para gerar o gráfico Top 5.")
 
-    # 2.2 NOVO GRÁFICO TOP 5 CLIENTES MAIS FIÉIS (MÊS) - FOCO EM FIDELIDADE
+    # 2.2 GRÁFICO TOP 5 CLIENTES MAIS FIÉIS (MÊS) - FOCO EM FIDELIDADE
     if not df_vendas_mes.empty and COLUNA_CLIENTE in df_vendas_mes.columns:
         
-        # Agrupa por cliente e SOMA o valor total gasto ('Total Limpo')
         top_clientes_valor = df_vendas_mes.groupby(COLUNA_CLIENTE)['Total Limpo'].sum().sort_values(ascending=False).head(5).reset_index()
         top_clientes_valor.columns = ['Cliente', 'Valor Gasto']
         
-        # Função para formatar o valor na legenda (opcional, mas melhora a visualização)
         top_clientes_valor['Legenda'] = top_clientes_valor['Cliente'] + ' (' + top_clientes_valor['Valor Gasto'].apply(lambda x: f"R$ {x:,.2f}".replace('.', 'X').replace(',', '.').replace('X', ',')) + ')'
         
         fig_clientes = px.pie(
@@ -346,7 +354,6 @@ def adicionar_graficos(df_vendas_mes, df_vendas_dia, df_gastos_mes):
     else:
         col_grafico_c.info("Sem dados de clientes para gerar o gráfico de fidelidade.")
 
-
 # --- FUNÇÃO PRINCIPAL DE MONTAGEM DO DASHBOARD STREAMLIT ---
 def montar_dashboard(df_vendas_mes, df_vendas_dia, df_gastos_mes, kpis_vendas, kpis_gastos):
     
@@ -356,7 +363,6 @@ def montar_dashboard(df_vendas_mes, df_vendas_dia, df_gastos_mes, kpis_vendas, k
     mes_titulo = agora_brasilia.strftime('%B/%Y').upper()
     
     if st.button("🔴 CLIQUE AQUI PARA ATUALIZAR DADOS AGORA (FORÇAR RECARGA)", type="primary"):
-        st.cache_data.clear()
         st.rerun() 
     
     st.title(f"🎂 Painel de Confeitaria: Mês de {mes_titulo}")
@@ -371,7 +377,10 @@ def montar_dashboard(df_vendas_mes, df_vendas_dia, df_gastos_mes, kpis_vendas, k
     total_vendas_mes = kpis_vendas['total_mes']
     total_gastos_mes = kpis_gastos['total_mes']
     resultado_liquido = total_vendas_mes - total_gastos_mes
-    ticket_medio = kpis_vendas['ticket_medio_mes'] 
+    
+    # MUDANÇA: Ticket Médio adicionado aqui
+    transacoes_mes = df_vendas_mes.shape[0] if not df_vendas_mes.empty else 0
+    ticket_medio = total_vendas_mes / transacoes_mes if transacoes_mes > 0 else 0.0
     
     cor_resultado = "normal" if resultado_liquido >= 0 else "inverse" 
 
@@ -387,7 +396,7 @@ def montar_dashboard(df_vendas_mes, df_vendas_dia, df_gastos_mes, kpis_vendas, k
     col_res_b.metric(
         label="TICKET MÉDIO (MÊS)",
         value=format_brl(ticket_medio),
-        help=f"Valor médio gasto por cada transação (baseado em {kpis_vendas['transacoes_mes']} transações)."
+        help=f"Valor médio gasto por cada transação (baseado em {transacoes_mes} transações)."
     )
 
     if total_vendas_mes > 0:
@@ -502,7 +511,6 @@ if __name__ == "__main__":
                 kpis_vendas = calcular_kpis_vendas(df_vendas_mes, df_vendas_dia, df_vendas_anterior) 
                 kpis_gastos = calcular_kpis_gastos(df_gastos_mes, df_gastos_dia)
                 
-                # Montar o dashboard passando os DataFrames e KPIs
                 montar_dashboard(df_vendas_mes, df_vendas_dia, df_gastos_mes, kpis_vendas, kpis_gastos)
                 
             else:
