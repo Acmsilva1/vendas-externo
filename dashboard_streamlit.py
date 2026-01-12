@@ -77,7 +77,6 @@ def filtrar_por_mes_e_dia(df, data_foco: date):
     
     return df_mes, df_dia
 
-# A remoção do cache (@st.cache_data) foi mantida para recarga imediata
 def carregar_e_limpar_dados():
     st.set_page_config(layout="wide", page_title="💰 Controle de vendas diário")
     
@@ -211,7 +210,7 @@ def calcular_kpis_gastos(df_mes, df_dia):
         
     return kpis
     
-# --- FUNÇÃO ATUALIZADA: ADICIONA GRÁFICOS INTERATIVOS ---
+# --- FUNÇÃO ATUALIZADA: ADICIONA GRÁFICOS INTERATIVOS (ADICIONADO TOP 5 GASTOS) ---
 def adicionar_graficos(df_vendas_mes, df_vendas_dia, df_gastos_mes):
 
     st.divider()
@@ -242,44 +241,21 @@ def adicionar_graficos(df_vendas_mes, df_vendas_dia, df_gastos_mes):
 
         fig_unificado = make_subplots(specs=[[{"secondary_y": True}]])
 
-        # BARRA 1: VALOR DE VENDAS (POSITIVO)
         fig_unificado.add_trace(
-            go.Bar(
-                x=df_unificado['Data'], 
-                y=df_unificado['Valor'], 
-                name='R$ Vendas',
-                marker_color='#4CAF50', 
-                hovertemplate="<b>Vendas:</b> %{y:$.2f}<br>" 
-            ),
+            go.Bar(x=df_unificado['Data'], y=df_unificado['Valor'], name='R$ Vendas', marker_color='#4CAF50', hovertemplate="<b>Vendas:</b> %{y:$.2f}<br>"),
             secondary_y=False,
         )
 
-        # BARRA 2: CUSTO (NEGATIVO)
         fig_unificado.add_trace(
-            go.Bar(
-                x=df_unificado['Data'], 
-                y=df_unificado['Custo Negativo'], 
-                name='R$ Custos',
-                marker_color='#F44336', 
-                hovertemplate="<b>Custos:</b> R$ %{y:,.2f}<br>" 
-            ),
+            go.Bar(x=df_unificado['Data'], y=df_unificado['Custo Negativo'], name='R$ Custos', marker_color='#F44336', hovertemplate="<b>Custos:</b> R$ %{y:,.2f}<br>"),
             secondary_y=False,
         )
         
-        # LINHA: QUANTIDADE VENDIDA 
         fig_unificado.add_trace(
-            go.Scatter(
-                x=df_unificado['Data'], 
-                y=df_unificado['Quantidade_Itens'], 
-                mode='lines+markers',
-                name='Nº Itens Vendidos',
-                line=dict(color='#FFC107', width=3), 
-                hovertemplate="<b>Itens Vendidos:</b> %{y}"
-            ),
+            go.Scatter(x=df_unificado['Data'], y=df_unificado['Quantidade_Itens'], mode='lines+markers', name='Nº Itens Vendidos', line=dict(color='#FFC107', width=3), hovertemplate="<b>Itens Vendidos:</b> %{y}"),
             secondary_y=True,
         )
 
-        # Configurações de Layout
         fig_unificado.update_layout(
             title_text="Produtividade e Resultado Diário (Vendas, Custos e Itens Vendidos)",
             barmode='overlay', 
@@ -287,7 +263,6 @@ def adicionar_graficos(df_vendas_mes, df_vendas_dia, df_gastos_mes):
             xaxis_title='Dia do Mês'
         )
 
-        # Configura o eixo Y primário (Valor R$)
         fig_unificado.update_yaxes(
             title_text="<b>R$ Valor (Vendas Positivo | Custos Negativo)</b>", 
             secondary_y=False,
@@ -295,7 +270,6 @@ def adicionar_graficos(df_vendas_mes, df_vendas_dia, df_gastos_mes):
             tickformat=",.2f"
         )
 
-        # Configura o eixo Y secundário (Quantidade)
         fig_unificado.update_yaxes(
             title_text="<b>Nº Itens Vendidos (Linha)</b>", 
             secondary_y=True,
@@ -309,7 +283,7 @@ def adicionar_graficos(df_vendas_mes, df_vendas_dia, df_gastos_mes):
         
     st.divider()
 
-    # --- 2. GRÁFICOS DE PIZZA (TOP ITENS e TOP CLIENTES) ---
+    # --- 2. GRÁFICOS DE PIZZA DE COMPOSIÇÃO (VENDAS E CLIENTES) ---
     col_vazia, col_grafico_b, col_grafico_c = st.columns([0.1, 1, 1]) 
 
     # 2.1 GRÁFICO TOP 5 ITENS VENDIDOS (MÊS) - FOCO EM PRODUTO
@@ -317,13 +291,13 @@ def adicionar_graficos(df_vendas_mes, df_vendas_dia, df_gastos_mes):
         top_sabores = df_vendas_mes[COLUNA_ITEM_VENDIDO].value_counts().head(5).reset_index()
         top_sabores.columns = ['Sabor', 'Contagem de Transações']
         
-        # MUDANÇA APLICADA AQUI: Adiciona a contagem na legenda
+        # Formatação para incluir a contagem na legenda (solicitação anterior)
         top_sabores['Legenda'] = top_sabores['Sabor'] + ' (' + top_sabores['Contagem de Transações'].astype(str) + ' unid.)'
         
         fig_top = px.pie(
             top_sabores, 
             values='Contagem de Transações', 
-            names='Legenda', # Agora usa a Legenda formatada
+            names='Legenda', 
             title='Top 5 Itens Mais Vendidos (Contagem)',
             hole=.3 
         )
@@ -354,6 +328,35 @@ def adicionar_graficos(df_vendas_mes, df_vendas_dia, df_gastos_mes):
     else:
         col_grafico_c.info("Sem dados de clientes para gerar o gráfico de fidelidade.")
 
+    # --- 3. NOVA SEÇÃO: DETALHAMENTO DE CUSTOS (TOP 5 GASTOS) ---
+    st.divider()
+    st.header("💸 Detalhamento de Custos (Top 5 Gastos)") 
+
+    col_vazia_2, col_gasto_a, col_gasto_b = st.columns([0.1, 1, 1])
+
+    if not df_gastos_mes.empty and COLUNA_ITEM_GASTO in df_gastos_mes.columns:
+        
+        # Agrupa por item de gasto e SOMA o valor total gasto ('Total Limpo')
+        top_gastos_valor = df_gastos_mes.groupby(COLUNA_ITEM_GASTO)['Total Limpo'].sum().sort_values(ascending=False).head(5).reset_index()
+        top_gastos_valor.columns = ['Item Gasto', 'Valor Gasto']
+        
+        # Adiciona a formatação de legenda (Nome do Item + R$ Valor Gasto)
+        top_gastos_valor['Legenda'] = top_gastos_valor['Item Gasto'] + ' (' + top_gastos_valor['Valor Gasto'].apply(lambda x: f"R$ {x:,.2f}".replace('.', 'X').replace(',', '.').replace('X', ',')) + ')'
+        
+        fig_gastos = px.pie(
+            top_gastos_valor, 
+            values='Valor Gasto', 
+            names='Legenda', 
+            title='Top 5 Itens de Maior Custo (por R$ Gasto)',
+            hole=.3 
+        )
+        # Ajusta o template do hover para clareza
+        fig_gastos.update_traces(hovertemplate="Item Gasto: %{label}<br>Valor Total: %{value:$.2f}<br>Percentual: %{percent}")
+        
+        col_gasto_a.plotly_chart(fig_gastos, use_container_width=True)
+    else:
+        col_gasto_a.info("Sem dados de gastos para gerar o gráfico Top 5 Custos.")
+
 # --- FUNÇÃO PRINCIPAL DE MONTAGEM DO DASHBOARD STREAMLIT ---
 def montar_dashboard(df_vendas_mes, df_vendas_dia, df_gastos_mes, kpis_vendas, kpis_gastos):
     
@@ -378,7 +381,6 @@ def montar_dashboard(df_vendas_mes, df_vendas_dia, df_gastos_mes, kpis_vendas, k
     total_gastos_mes = kpis_gastos['total_mes']
     resultado_liquido = total_vendas_mes - total_gastos_mes
     
-    # MUDANÇA: Ticket Médio adicionado aqui
     transacoes_mes = df_vendas_mes.shape[0] if not df_vendas_mes.empty else 0
     ticket_medio = total_vendas_mes / transacoes_mes if transacoes_mes > 0 else 0.0
     
