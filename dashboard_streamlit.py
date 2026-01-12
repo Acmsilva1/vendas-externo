@@ -467,22 +467,20 @@ def montar_dashboard(df_vendas_mes, df_vendas_dia, df_gastos_mes, kpis_vendas, k
         delta_color="off" 
     )
     
-    delta_valor_formatado = format_brl(diferenca_valor)
-
+    # CORREÇÃO APLICADA AQUI: delta recebe o valor numérico (float)
     col_comp_valor.metric(
         label="R$ DIF. (HOJE vs. ONTEM)",
         value=format_brl(diferenca_valor),
-        delta=delta_valor_formatado, 
+        delta=diferenca_valor, # <--- Corrigido para passar o float/int.
         delta_color=cor_neutra, 
         help=f"Comparação com o total de R$ {kpis_vendas['total_anterior']:,.2f} vendido ontem."
     )
 
-    delta_itens_formatado = f"{diferenca_itens:.0f} itens" 
-
+    # CORREÇÃO APLICADA AQUI: delta recebe o valor numérico (float/int)
     col_comp_und.metric(
         label="ITENS DIF. (HOJE vs. ONTEM)", 
         value=f"{diferenca_itens:.0f} itens",
-        delta=delta_itens_formatado,
+        delta=diferenca_itens, # <--- Corrigido para passar o float/int.
         delta_color=cor_neutra, 
         help=f"Variação no número de ITENS vendidos. Ontem: {kpis_vendas['contagem_anterior']:.0f} itens."
     )
