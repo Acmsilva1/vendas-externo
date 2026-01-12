@@ -5,7 +5,7 @@ import streamlit as st
 import time 
 import pytz 
 import plotly.express as px 
-# Importações necessárias para o Gráfico de Produtividade Diária (Eixo Duplo)
+# NOVAS IMPORTAÇÕES PARA O GRÁFICO DE PRODUTIVIDADE DUAL AXIS
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
@@ -27,7 +27,7 @@ COLUNA_VALOR_GASTO = 'VALOR'
 # COMUM
 COLUNA_DATA_HORA = 'DATA E HORA'
 
-# CONSTANTES PARA ORDENAÇÃO DE GRÁFICO E TABELA SEMANAL
+# NOVAS CONSTANTES PARA ORDENAÇÃO DE GRÁFICO DE DIA DA SEMANA
 DIA_SEMANA_ORDEM = ["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado", "Domingo"]
 DIA_SEMANA_MAP = {
     0: 'Segunda', 1: 'Terça', 2: 'Quarta', 3: 'Quinta', 4: 'Sexta', 5: 'Sábado', 6: 'Domingo'
@@ -79,7 +79,6 @@ def filtrar_por_mes_e_dia(df, data_foco: date):
     if 'Data/Hora' not in df.columns:
         return pd.DataFrame(), pd.DataFrame() 
         
-    # Filtro automático para o mês vigente
     df_mes = df[(df['Data/Hora'].dt.month == mes_foco) & (df['Data/Hora'].dt.year == ano_foco)].copy()
     df_dia = df[df['Data'] == data_foco].copy()
     
@@ -217,70 +216,14 @@ def calcular_kpis_gastos(df_mes, df_dia):
         kpis['gasto_principal_valor'] = 0.0
         
     return kpis
-
-# --- NOVAS FUNÇÕES DE CÁLCULO E TABELA ANALÍTICA (Performance Semanal) ---
-
-def calcular_performance_semanal(df_vendas_mes, df_gastos_mes):
-    """Calcula Vendas, Gastos e Resultado Agregado por Dia da Semana."""
-
-    if df_vendas_mes.empty and df_gastos_mes.empty:
-        return pd.DataFrame()
-
-    # --- 1. Preparação dos DataFrames ---
     
-    # Vendas
-    if not df_vendas_mes.empty:
-        df_vendas_mes['Dia_Semana_Num'] = df_vendas_mes['Data/Hora'].dt.dayofweek
-        df_vendas_mes['Dia_Semana'] = df_vendas_mes['Dia_Semana_Num'].map(DIA_SEMANA_MAP)
-        df_vendas_agregado = df_vendas_mes.groupby(['Dia_Semana_Num', 'Dia_Semana'])['Total Limpo'].sum().reset_index()
-        df_vendas_agregado.rename(columns={'Total Limpo': 'R$ Vendas'}, inplace=True)
-    else:
-        df_vendas_agregado = pd.DataFrame(columns=['Dia_Semana_Num', 'Dia_Semana', 'R$ Vendas'])
-
-    # Gastos
-    if not df_gastos_mes.empty:
-        df_gastos_mes['Dia_Semana_Num'] = df_gastos_mes['Data/Hora'].dt.dayofweek
-        df_gastos_mes['Dia_Semana'] = df_gastos_mes['Dia_Semana_Num'].map(DIA_SEMANA_MAP)
-        df_gastos_agregado = df_gastos_mes.groupby(['Dia_Semana_Num', 'Dia_Semana'])['Total Limpo'].sum().reset_index()
-        df_gastos_agregado.rename(columns={'Total Limpo': 'R$ Gastos'}, inplace=True)
-    else:
-        df_gastos_agregado = pd.DataFrame(columns=['Dia_Semana_Num', 'Dia_Semana', 'R$ Gastos'])
-
-
-    # --- 2. Merge e Cálculo ---
-    
-    df_performance = pd.merge(
-        df_vendas_agregado,
-        df_gastos_agregado,
-        on=['Dia_Semana_Num', 'Dia_Semana'],
-        how='outer'
-    ).fillna(0) # Preenche com 0 onde não houve vendas OU gastos
-
-    # Cálculo da Margem/Resultado Bruto
-    df_performance['R$ Resultado Bruto'] = df_performance['R$ Vendas'] - df_performance['R$ Gastos']
-
-    # Garante a ordem correta dos dias da semana
-    df_performance = df_performance.set_index('Dia_Semana_Num').reindex(range(7)).reset_index()
-    df_performance['Dia_Semana'] = df_performance['Dia_Semana'].fillna(df_performance['Dia_Semana_Num'].map(DIA_SEMANA_MAP))
-    
-    # Limpeza e Ordenação final
-    df_performance = df_performance[['Dia_Semana', 'R$ Vendas', 'R$ Gastos', 'R$ Resultado Bruto']]
-    
-    # Formatação para exibição
-    df_performance['R$ Vendas'] = df_performance['R$ Vendas'].apply(format_brl)
-    df_performance['R$ Gastos'] = df_performance['R$ Gastos'].apply(format_brl)
-    df_performance['R$ Resultado Bruto'] = df_performance['R$ Resultado Bruto'].apply(format_brl)
-    
-    return df_performance.sort_values(by=['Dia_Semana'], key=lambda x: x.map({d: i for i, d in enumerate(DIA_SEMANA_ORDEM)}))
-
-
-# --- FUNÇÃO ATUALIZADA: ADICIONA GRÁFICOS INTERATIVOS ---
+# --- FUNÇÃO ATUALIZADA: ADICIONA GRÁFICOS INTERATIVOS (ADICIONADO VENDAS POR DIA DA SEMANA) ---
 def adicionar_graficos(df_vendas_mes, df_vendas_dia, df_gastos_mes):
 
     st.divider()
     st.header("📈 Visualização Detalhada")
 
-    # 1. GRÁFICO ÚNICO: PRODUTIVIDADE E RESULTADO DIÁRIO (UNIFICADO) - Triplo Eixo
+    # 1. GRÁFICO ÚNICO: PRODUTIVIDADE E RESULTADO DIÁRIO (UNIFICADO)
     if not df_vendas_mes.empty or not df_gastos_mes.empty:
         
         # --- PREPARAÇÃO DE DADOS (Unificado) ---
@@ -391,11 +334,11 @@ def adicionar_graficos(df_vendas_mes, df_vendas_dia, df_gastos_mes):
     else:
         col_grafico_c.info("Sem dados de clientes para gerar o gráfico de fidelidade.")
 
-    # --- 3. SEÇÃO: DETALHAMENTO DE CUSTOS E PRODUTIVIDADE SEMANAL (Gráficos) ---
+    # --- 3. NOVA SEÇÃO: DETALHAMENTO DE CUSTOS E PRODUTIVIDADE SEMANAL ---
     st.divider()
-    st.header("💸 Detalhamento de Custos e Produtividade Semanal (Gráficos)") 
+    st.header("💸 Detalhamento de Custos e Produtividade Semanal") 
 
-    col_gasto_a, col_gasto_b, col_gasto_c = st.columns([1, 1, 1])
+    col_vazia_2, col_gasto_a, col_gasto_b = st.columns([0.1, 1, 1])
 
     # 3.1 GRÁFICO TOP 5 ITENS DE MAIOR CUSTO (MÊS)
     if not df_gastos_mes.empty and COLUNA_ITEM_GASTO in df_gastos_mes.columns:
@@ -419,65 +362,38 @@ def adicionar_graficos(df_vendas_mes, df_vendas_dia, df_gastos_mes):
         col_gasto_a.info("Sem dados de gastos para gerar o gráfico Top 5 Custos.")
 
     
-    # 3.2 GRÁFICO: VENDAS POR DIA DA SEMANA (R$ TOTAL VENDIDO)
+    # 3.2 NOVO GRÁFICO: VENDAS POR DIA DA SEMANA (MÊS)
     if not df_vendas_mes.empty:
         
-        # Pré-processamento Comum para gráficos semanais
+        # 1. Extrair o dia da semana (0=Segunda, 6=Domingo)
         df_vendas_mes['Dia_Semana_Num'] = df_vendas_mes['Data/Hora'].dt.dayofweek
+        
+        # 2. Mapear para nome em Português
         df_vendas_mes['Dia_Semana'] = df_vendas_mes['Dia_Semana_Num'].map(DIA_SEMANA_MAP)
         
-        # Agrupamento para R$ Total Vendido
+        # 3. Agrupar e Somar o valor total vendido
         vendas_por_dia = df_vendas_mes.groupby(['Dia_Semana_Num', 'Dia_Semana'])['Total Limpo'].sum().reset_index()
         vendas_por_dia.rename(columns={'Total Limpo': 'R$ Total Vendido'}, inplace=True)
         
-        # Criação do gráfico de colunas
-        fig_dia_semana_total = px.bar(
+        # 4. Criação do gráfico de colunas
+        fig_dia_semana = px.bar(
             vendas_por_dia,
             x='Dia_Semana',
             y='R$ Total Vendido',
-            title='Total de Vendas por Dia da Semana',
+            title='Total de Vendas por Dia da Semana (Mês)',
+            # Garante que o Plotly use a ordem de 'Segunda' a 'Domingo'
             category_orders={"Dia_Semana": DIA_SEMANA_ORDEM}, 
             color='R$ Total Vendido', 
             color_continuous_scale=px.colors.sequential.Plotly3 
         )
-        fig_dia_semana_total.update_layout(xaxis_title="Dia da Semana", yaxis_title="R$ Total Vendido")
-        fig_dia_semana_total.update_yaxes(tickprefix='R$', tickformat=",.2f")
-        
-        col_gasto_b.plotly_chart(fig_dia_semana_total, use_container_width=True)
-        
-    else:
-        col_gasto_b.info("Sem dados de vendas para gerar o gráfico de Produtividade Semanal (Total).")
-
-    # 3.3 GRÁFICO: TICKET MÉDIO POR DIA DA SEMANA
-    if not df_vendas_mes.empty:
-        
-        # Agrupar e calcular o ticket médio
-        ticket_medio_por_dia = df_vendas_mes.groupby(['Dia_Semana_Num', 'Dia_Semana']).agg(
-            Transacoes=('Total Limpo', 'count'),
-            ValorTotal=('Total Limpo', 'sum')
-        ).reset_index()
-        
-        # Cálculo do Ticket Médio
-        ticket_medio_por_dia['Ticket Médio'] = ticket_medio_por_dia['ValorTotal'] / ticket_medio_por_dia['Transacoes']
-        
-        # Criação do gráfico de colunas para Ticket Médio
-        fig_ticket_medio = px.bar(
-            ticket_medio_por_dia,
-            x='Dia_Semana',
-            y='Ticket Médio',
-            title='Ticket Médio por Dia da Semana',
-            category_orders={"Dia_Semana": DIA_SEMANA_ORDEM},
-            color='Ticket Médio', 
-            color_continuous_scale=px.colors.sequential.Plasma 
-        )
         
         # Formatação
-        fig_ticket_medio.update_layout(xaxis_title="Dia da Semana", yaxis_title="R$ Ticket Médio")
-        fig_ticket_medio.update_yaxes(tickprefix='R$', tickformat=",.2f")
+        fig_dia_semana.update_layout(xaxis_title="Dia da Semana", yaxis_title="R$ Total Vendido")
+        fig_dia_semana.update_yaxes(tickprefix='R$', tickformat=",.2f")
         
-        col_gasto_c.plotly_chart(fig_ticket_medio, use_container_width=True)
+        col_gasto_b.plotly_chart(fig_dia_semana, use_container_width=True)
     else:
-        col_gasto_c.info("Sem dados de vendas para gerar o gráfico de Ticket Médio Semanal.")
+        col_gasto_b.info("Sem dados de vendas para gerar o gráfico de Produtividade Semanal.")
 
 
 # --- FUNÇÃO PRINCIPAL DE MONTAGEM DO DASHBOARD STREAMLIT ---
@@ -534,50 +450,64 @@ def montar_dashboard(df_vendas_mes, df_vendas_dia, df_gastos_mes, kpis_vendas, k
 
     st.divider()
 
-    # --- 2. KPIS DE VENDAS E GASTOS (LINHA PRINCIPAL, SEM SETAS COMPLICADAS) ---
+    # --- 2. KPIS DE VENDAS E GASTOS (LINHA PRINCIPAL) ---
     st.header("💰 Vendas x Despesas (Valores e Quantidades)")
     
     diferenca_valor = kpis_vendas['total_dia'] - kpis_vendas['total_anterior']
     diferenca_itens = kpis_vendas['contagem_dia'] - kpis_vendas['contagem_anterior'] 
     
+    cor_neutra = "off" 
+    
     col1, col_comp_valor, col_comp_und, col2, col3, col4 = st.columns([1, 1, 1, 1, 1, 1]) 
     
-    # 1. R$ VENDAS HOJE (Simplificado)
     col1.metric(
         label="R$ VENDAS HOJE", 
         value=format_brl(kpis_vendas['total_dia']),
+        delta=f"{kpis_vendas['contagem_dia']} itens vendidos", 
+        delta_color="off" 
     )
     
-    # 2. R$ DIF. (HOJE vs. ONTEM) - Sem delta/setas redundantes
+    delta_valor_formatado = format_brl(diferenca_valor)
+
     col_comp_valor.metric(
         label="R$ DIF. (HOJE vs. ONTEM)",
         value=format_brl(diferenca_valor),
-        help=f"Diferença de R$ entre hoje e o total vendido ontem ({kpis_vendas['total_anterior']:,.2f})."
+        delta=delta_valor_formatado, 
+        delta_color=cor_neutra, 
+        help=f"Comparação com o total de R$ {kpis_vendas['total_anterior']:,.2f} vendido ontem."
     )
 
-    # 3. ITENS DIF. (HOJE vs. ONTEM) - Sem delta/setas redundantes
+    delta_itens_formatado = f"{diferenca_itens:.0f} itens" 
+
     col_comp_und.metric(
         label="ITENS DIF. (HOJE vs. ONTEM)", 
         value=f"{diferenca_itens:.0f} itens",
-        help=f"Variação no número de ITENS vendidos (vs. {kpis_vendas['contagem_anterior']:.0f} itens ontem)."
+        delta=delta_itens_formatado,
+        delta_color=cor_neutra, 
+        help=f"Variação no número de ITENS vendidos. Ontem: {kpis_vendas['contagem_anterior']:.0f} itens."
     )
     
-    # 4. R$ VENDAS MÊS (Simplificado)
     col2.metric(
         label="R$ VENDAS MÊS", 
         value=format_brl(kpis_vendas['total_mes']), 
+        delta=f"{kpis_vendas['contagem_mes']} itens vendidos",
+        delta_color="off"
     )
     
-    # 5. R$ GASTOS HOJE (Simplificado)
     col3.metric(
         label="R$ GASTOS HOJE", 
         value=format_brl(kpis_gastos['total_dia']),
+        delta=f"{kpis_gastos['contagem_dia']} registros de gasto",
+        delta_color=cor_neutra, 
+        help="Gastos registrados na data atual."
     )
     
-    # 6. R$ GASTOS MÊS (Simplificado)
     col4.metric(
         label="R$ GASTOS MÊS", 
         value=format_brl(kpis_gastos['total_mes']),
+        delta=f"{kpis_gastos['contagem_mes']} registros de gasto",
+        delta_color=cor_neutra, 
+        help="Gastos totais registrados no mês vigente."
     )
     
     st.divider()
@@ -605,27 +535,6 @@ def montar_dashboard(df_vendas_mes, df_vendas_dia, df_gastos_mes, kpis_vendas, k
         f"**Item de Maior Gasto (Mês):** {kpis_gastos['item_principal_gasto_mes']} ({gasto_valor}). Revise este custo!"
     )
     
-    # --- NOVO: TABELA DE PERFORMANCE SEMANAL ---
-    st.divider()
-    st.header("📊 Performance Semanal: Vendas vs. Custos (Mês)")
-    
-    df_performance_semanal = calcular_performance_semanal(df_vendas_mes, df_gastos_mes)
-    
-    if not df_performance_semanal.empty:
-        st.dataframe(
-            df_performance_semanal, 
-            hide_index=True, 
-            use_container_width=True,
-            column_config={
-                "Dia_Semana": st.column_config.TextColumn("Dia da Semana"),
-                "R$ Vendas": st.column_config.TextColumn("R$ Vendas", help="Receita bruta total do dia."),
-                "R$ Gastos": st.column_config.TextColumn("R$ Gastos", help="Despesas operacionais e insumos do dia."),
-                "R$ Resultado Bruto": st.column_config.TextColumn("R$ Resultado Bruto", help="R$ Vendas - R$ Gastos.")
-            }
-        )
-    else:
-        st.info("Sem dados para calcular a performance semanal Vendas vs. Custos.")
-        
     # --- 4. GRÁFICOS (CHAMADA DA FUNÇÃO) ---
     adicionar_graficos(df_vendas_mes, df_vendas_dia, df_gastos_mes)
 
